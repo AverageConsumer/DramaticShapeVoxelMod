@@ -29,6 +29,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Voxel = V.require("VoxelState")
+local GraphicsSettings = V.require("GraphicsSettings")
 
 local ShadowMap = {}
 
@@ -147,14 +148,49 @@ local SHADER = [[
 
 ShadowMap._source = function() return SHADER end   -- named for the suite
 
+-- Terrain is already tessellated to its visible silhouette. Unlike sprite
+-- cards and flower billboards it has no alpha-keyed empty area, so sampling
+-- the atlas for every shadow-map fragment only to discover alpha 1 is pure
+-- bandwidth. This variant writes the exact same packed depth without that
+-- texture fetch. On tile GPUs this is especially important: the terrain is
+-- by far the largest caster and the sun pass used to spend most of its time
+-- reading a color texture whose color it never used.
+local OPAQUE_SHADER = [[
+  varying float vDepth;
+#ifdef VERTEX
+  uniform mat4 lightVP;
+  uniform mat4 model;
+  vec4 position(mat4 transform_projection, vec4 vertex_position) {
+    vec4 c = lightVP * (model * vertex_position);
+    vDepth = c.z * 0.5 + 0.5;
+    return c;
+  }
+#endif
+#ifdef PIXEL
+  vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    float d = clamp(vDepth, 0.0, 1.0) * 255.0;
+    return vec4(floor(d) / 255.0, fract(d), 0.0, 1.0);
+  }
+#endif
+]]
+
 local shader = nil            -- nil = untried, false = unavailable
+local opaqueShader = nil      -- optional fast path; cutout shader is fallback
+local activeShader = nil
 local canvas = nil            -- nil = untried, false = unavailable
 local canvasRes = 0           -- the edge `canvas` was made at
+local actorCanvas = nil       -- moving-character depth, separate from terrain
+local actorCanvasRes = 0
 local blank = nil             -- 1x1 stand-in so the sampler is never unbound
 local drawing = false
 local ready = false
-local lastSig = nil
+local actorReady = false
+local lastStaticSig, lastDynamicSig = nil, nil
+local lastCastAt = 0
+local lastActorSig, lastActorCastAt = nil, 0
+local staticCx, staticCy = nil, nil
 local prevBlend, prevAlphaMode = nil, nil
+local clock = (love and love.timer and love.timer.getTime) or os.clock
 
 local IDENTITY = Mat4.identity()
 
@@ -201,6 +237,24 @@ local function getCanvas(res)
   return canvas
 end
 
+local function getActorCanvas(res)
+  if actorCanvas == false then return nil end
+  if actorCanvas and actorCanvasRes == res then return actorCanvas end
+  local ok, c = pcall(love.graphics.newCanvas, res, res)
+  if not (ok and c) then
+    actorCanvas = false
+    return nil
+  end
+  c:setFilter("nearest", "nearest")
+  pcall(c.setWrap, c, "clamp", "clamp")
+  if actorCanvas and actorCanvas.release then
+    pcall(actorCanvas.release, actorCanvas)
+  end
+  actorCanvas, actorCanvasRes = c, res
+  actorReady = false
+  return actorCanvas
+end
+
 -- A 1x1 opaque white image. The main pass's shader always declares the
 -- shadow sampler, so something has to be bound even on the frames (and the
 -- drivers) where there is no map -- unpacked it reads as depth 1 + 1/255,
@@ -224,26 +278,54 @@ function ShadowMap.available()
   if love.system and love.system.getOS and love.system.getOS() == "iOS" then
     return false
   end
+  if not GraphicsSettings.shadowsEnabled() then return false end
   if not (love.graphics and love.graphics.newCanvas
           and love.graphics.setDepthMode) then
     return false
   end
-  -- the smallest rung is enough to answer the question; fit() picks the
-  -- one this frame actually wants
-  return getShader() ~= nil and getCanvas(ShadowMap.SIZES[1]) ~= nil
+  if not getShader() then return false end
+  -- Do not ask getCanvas for the smallest rung once a canvas exists.
+  -- Doing so resized a 1536/2048 map down to 1024 here, immediately before
+  -- fit() resized it back up in begin(). On a moving outdoor scene that
+  -- allocated and released two large color+depth targets every frame.
+  if canvas and canvas ~= false then return true end
+  local sizes = GraphicsSettings.shadowSizes() or ShadowMap.SIZES
+  return getCanvas(sizes[1]) ~= nil
 end
 
 -- The map to sample, or the blank stand-in. Never nil once the main pass
 -- has a shader at all, because an unbound sampler is a driver-dependent
 -- crash rather than a driver-dependent fallback.
 function ShadowMap.texture()
-  if ready and canvas then return canvas end
+  if GraphicsSettings.shadowsEnabled() and ready and canvas then return canvas end
   return getBlank()
+end
+
+function ShadowMap.actorTexture()
+  if GraphicsSettings.shadowsEnabled() and actorReady and actorCanvas then
+    return actorCanvas
+  end
+  return getBlank()
+end
+
+local function getOpaqueShader()
+  if opaqueShader == nil then
+    local ok, sh = pcall(love.graphics.newShader, OPAQUE_SHADER)
+    opaqueShader = (ok and sh) or false
+  end
+  return opaqueShader or nil
 end
 
 -- True while the map holds a frame the main pass can read.
 function ShadowMap.active()
-  return ready and canvas ~= nil and canvas ~= false
+  return GraphicsSettings.shadowsEnabled()
+         and ready and canvas ~= nil and canvas ~= false
+end
+
+function ShadowMap.actorsActive()
+  return GraphicsSettings.shadowsEnabled()
+         and ready and actorReady
+         and actorCanvas ~= nil and actorCanvas ~= false
 end
 
 -- The direction the light TRAVELS, normalized. The shear is the shadow a
@@ -256,6 +338,33 @@ local function sunDir()
 end
 
 ShadowMap.sunDir = sunDir
+
+-- Whether a world-space AABB overlaps the light frustum fitted by begin().
+-- Because the projection is orthographic, transforming the eight box corners
+-- gives an exact conservative clip test. `ox`/`oz` place a connected map's
+-- local chunk in the current map's world space.
+function ShadowMap.visible(bounds, ox, oz)
+  if not bounds then return true end
+  ox, oz = ox or 0, oz or 0
+  local m = ShadowMap.clipVP
+  local minx, miny, minz = math.huge, math.huge, math.huge
+  local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
+  for _, x in ipairs({ bounds.x0 + ox, bounds.x1 + ox }) do
+    for _, y in ipairs({ bounds.y0, bounds.y1 }) do
+      for _, z in ipairs({ bounds.z0 + oz, bounds.z1 + oz }) do
+        local px = m[1] * x + m[2] * y + m[3] * z + m[4]
+        local py = m[5] * x + m[6] * y + m[7] * z + m[8]
+        local pz = m[9] * x + m[10] * y + m[11] * z + m[12]
+        minx, maxx = math.min(minx, px), math.max(maxx, px)
+        miny, maxy = math.min(miny, py), math.max(maxy, py)
+        minz, maxz = math.min(minz, pz), math.max(maxz, pz)
+      end
+    end
+  end
+  return maxx >= -1 and minx <= 1
+     and maxy >= -1 and miny <= 1
+     and maxz >= -1 and minz <= 1
+end
 
 -- How far NORTH of the view centre the camera can still see ground, in
 -- world pixels: the top edge of the view frustum dropped onto the ground
@@ -300,14 +409,22 @@ local function fit(cx, cy, vw, vh)
 
   local reach = ShadowMap.HEIGHT
                 * math.max(math.abs(ShadowMap.KX), math.abs(ShadowMap.KZ)) + 24
+  -- Static overworld shadows keep this matrix while the camera travels
+  -- inside STATIC_TRAVEL. Fit an equal guard around the receiver region so
+  -- the newly revealed rim was already rendered; the extra eight pixels
+  -- cover a full Gen 1 tile at the threshold boundary.
+  local guard = (ShadowMap.STATIC_TRAVEL or 16) + 8
   local north = groundReach(vh)
   -- the view widens with distance, so the far ground spans more than the
   -- near ground does; half the depth is a serviceable stand-in for the
   -- frustum's true spread and costs a good deal less resolution
   local spread = north * 0.5
-  local xs = { cx - vw / 2 - spread, cx + vw / 2 + spread + reach }
+  local xs = {
+    cx - vw / 2 - spread - guard,
+    cx + vw / 2 + spread + reach + guard,
+  }
   local ys = { -32, ShadowMap.HEIGHT }         -- -32 covers recessed water
-  local zs = { cy - north, cy + vh / 2 + reach }
+  local zs = { cy - north - guard, cy + vh / 2 + reach + guard }
 
   local l, r, b, t, zn, zf
   for _, x in ipairs(xs) do
@@ -330,8 +447,9 @@ local function fit(cx, cy, vw, vh)
 
   -- pick the resolution rung: the smallest that resolves TARGET world
   -- pixels per texel across the wider side, else the largest there is
-  local res = ShadowMap.SIZES[#ShadowMap.SIZES]
-  for _, size in ipairs(ShadowMap.SIZES) do
+  local sizes = GraphicsSettings.shadowSizes() or ShadowMap.SIZES
+  local res = sizes[#sizes]
+  for _, size in ipairs(sizes) do
     if math.max(w, h) / size <= ShadowMap.TARGET then
       res = size
       break
@@ -416,21 +534,50 @@ function ShadowMap.snug(model)
                   model or IDENTITY)
 end
 
--- Whether the map has to be redrawn for `sig` -- a caller-built stamp of
--- everything the pass depends on (camera, terrain meshes, every pose). A
--- frame that changes none of it reuses the map it already has, which is
--- most of a dialog, a menu or any moment standing still.
-function ShadowMap.stale(sig)
-  return not ready or sig ~= lastSig
+-- Structural changes redraw immediately. Motion changes use the selected
+-- cadence; the light matrix is world-space, so frames between updates reuse
+-- the old map in place rather than sliding it with the screen. A one-argument
+-- caller keeps the historical all-immediate behaviour.
+function ShadowMap.stale(staticSig, dynamicSig)
+  if dynamicSig == nil then dynamicSig = staticSig end
+  if not ready or staticSig ~= lastStaticSig then return true end
+  if dynamicSig == lastDynamicSig then return false end
+  local interval = GraphicsSettings.shadowUpdateInterval()
+  return interval <= 0 or clock() - lastCastAt >= interval
+end
+
+-- The static layer is world-anchored, so camera motion does not invalidate
+-- its contents. Re-fit only after the view has travelled far enough that the
+-- generous caster fringe should move with it. Because fit() snaps to the same
+-- global texel grid, the recast is identical throughout the overlapping area.
+ShadowMap.STATIC_TRAVEL = 32
+
+function ShadowMap.staticStale(staticSig, cx, cy)
+  if not ready or staticSig ~= lastStaticSig then return true end
+  if staticCx == nil or staticCy == nil then return true end
+  return math.abs(cx - staticCx) >= ShadowMap.STATIC_TRAVEL
+      or math.abs(cy - staticCy) >= ShadowMap.STATIC_TRAVEL
+end
+
+function ShadowMap.actorStale(dynamicSig)
+  if not ready then return false end
+  if not actorReady then return true end
+  if dynamicSig == lastActorSig then return false end
+  local interval = GraphicsSettings.shadowUpdateInterval()
+  return interval <= 0 or clock() - lastActorCastAt >= interval
 end
 
 -- Begin the sun pass. Returns false when it could not start, in which case
 -- the caller must not draw into it or call finish.
 function ShadowMap.begin(cx, cy, vw, vh)
+  if not GraphicsSettings.shadowsEnabled() then return false end
   local sh = getShader()
   if not sh then return false end
   -- fit first: it is what decides which resolution rung this view wants
   fit(cx, cy, vw, vh)
+  -- Any actor map was projected through the previous light matrix.
+  actorReady = false
+  lastActorSig = nil
   local c = getCanvas(ShadowMap.res)
   if not c then return false end
   local ok = pcall(love.graphics.setCanvas, { c, depth = true })
@@ -446,9 +593,13 @@ function ShadowMap.begin(cx, cy, vw, vh)
   love.graphics.setMeshCullMode("none")
   -- replace, not alpha blend: these are packed numbers, not colors
   love.graphics.setBlendMode("replace", "premultiplied")
-  love.graphics.setShader(sh)
+  activeShader = getOpaqueShader() or sh
+  love.graphics.setShader(activeShader)
   love.graphics.setColor(1, 1, 1, 1)
-  pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
+  pcall(activeShader.send, activeShader, "lightVP", "row", ShadowMap.clipVP)
+  if activeShader ~= sh then
+    pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
+  end
   -- the world until a cast pass says otherwise, reset per pass so one that
   -- forgot to put it back cannot leak into the next map's terrain
   pcall(sh.send, sh, "sprite", 0)
@@ -479,31 +630,102 @@ function ShadowMap.sprites(on)
   if sh then pcall(sh.send, sh, "sprite", on and 1 or 0) end
 end
 
-function ShadowMap.draw(mesh, texture, model)
+function ShadowMap.draw(mesh, texture, model, opaque)
   if not (drawing and mesh) then return end
-  local sh = getShader()
+  local sh = (opaque and getOpaqueShader()) or getShader()
+  if sh ~= activeShader then
+    activeShader = sh
+    love.graphics.setShader(sh)
+    pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
+  end
   if texture then mesh:setTexture(texture) end
   pcall(sh.send, sh, "model", "row", model or IDENTITY)
   love.graphics.draw(mesh)
 end
 
+-- Start the cheap moving-caster layer through the static map's unchanged
+-- light matrix. No fit and no terrain draw: normally this is only a few
+-- sprite quads.
+function ShadowMap.beginActors()
+  if not (GraphicsSettings.shadowsEnabled() and ready) then return false end
+  local sh = getShader()
+  if not sh then return false end
+  local c = getActorCanvas(ShadowMap.res)
+  if not c then return false end
+  local ok = pcall(love.graphics.setCanvas, { c, depth = true })
+  if not ok then
+    pcall(love.graphics.setCanvas)
+    return false
+  end
+  prevBlend, prevAlphaMode = love.graphics.getBlendMode()
+  love.graphics.clear(1, 1, 0, 1, true, true)
+  love.graphics.setDepthMode("lequal", true)
+  love.graphics.setMeshCullMode("none")
+  love.graphics.setBlendMode("replace", "premultiplied")
+  activeShader = sh
+  love.graphics.setShader(sh)
+  love.graphics.setColor(1, 1, 1, 1)
+  pcall(sh.send, sh, "lightVP", "row", ShadowMap.clipVP)
+  drawing = true
+  actorReady = false
+  return true
+end
+
 -- Close the pass and stamp it with the signature it was drawn for.
-function ShadowMap.finish(sig)
+function ShadowMap.finish(staticSig, dynamicSig)
   if not drawing then return end
   drawing = false
+  activeShader = nil
   love.graphics.setShader()
   love.graphics.setDepthMode()
   love.graphics.setCanvas()
   love.graphics.setBlendMode(prevBlend or "alpha", prevAlphaMode)
   love.graphics.setColor(1, 1, 1, 1)
-  lastSig = sig
+  lastStaticSig = staticSig
+  lastDynamicSig = dynamicSig or staticSig
+  lastCastAt = clock()
   ready = true
+end
+
+function ShadowMap.finishStatic(staticSig, cx, cy)
+  ShadowMap.finish(staticSig, staticSig)
+  staticCx, staticCy = cx, cy
+  actorReady = false
+  lastActorSig = nil
+end
+
+function ShadowMap.finishActors(dynamicSig)
+  if not drawing then return end
+  drawing = false
+  activeShader = nil
+  love.graphics.setShader()
+  love.graphics.setDepthMode()
+  love.graphics.setCanvas()
+  love.graphics.setBlendMode(prevBlend or "alpha", prevAlphaMode)
+  love.graphics.setColor(1, 1, 1, 1)
+  lastActorSig = dynamicSig
+  lastActorCastAt = clock()
+  actorReady = true
 end
 
 -- Drop the GPU objects (window resize, hot reload).
 function ShadowMap.invalidate()
-  canvas, canvasRes, blank = nil, 0, nil
-  drawing, ready, lastSig = false, false, nil
+  if canvas and canvas.release then pcall(canvas.release, canvas) end
+  if actorCanvas and actorCanvas.release then
+    pcall(actorCanvas.release, actorCanvas)
+  end
+  if blank and blank.release then pcall(blank.release, blank) end
+  if shader and shader.release then pcall(shader.release, shader) end
+  if opaqueShader and opaqueShader.release then
+    pcall(opaqueShader.release, opaqueShader)
+  end
+  shader, opaqueShader, activeShader = nil, nil, nil
+  canvas, canvasRes, actorCanvas, actorCanvasRes, blank =
+    nil, 0, nil, 0, nil
+  drawing, ready, actorReady = false, false, false
+  lastStaticSig, lastDynamicSig, lastCastAt = nil, nil, 0
+  lastActorSig, lastActorCastAt = nil, 0
+  staticCx, staticCy = nil, nil
 end
 
 return ShadowMap
