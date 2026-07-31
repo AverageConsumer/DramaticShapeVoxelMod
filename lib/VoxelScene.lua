@@ -478,7 +478,18 @@ function VoxelScene.prefetch(state)
       nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, false)
     end
   end
-  Voxel.ready = terrain ~= nil
+  local pending = ChunkMesher.pending()
+  if not terrain and pending > 0 then
+    Voxel.beginLoading(state.map.id)
+  elseif Voxel.loading and Voxel.loadingMap == state.map.id and pending == 0 then
+    -- A tilted camera sees well across map seams, so "current map ready" is
+    -- not a sufficient visual condition: Route 1 is already on the Pallet
+    -- horizon. Wait for every current-neighbourhood job requested above.
+    -- A failed current build also reaches pending=0 and releases the cover,
+    -- preserving the vanilla fallback instead of an infinite loading screen.
+    Voxel.finishLoading(state.map.id)
+  end
+  Voxel.ready = terrain ~= nil and not Voxel.loading
   return terrain, nbMesh, water, nbWater
 end
 
@@ -730,46 +741,85 @@ function VoxelScene.drawWater(draws, cast)
   end
 end
 
--- A stamp of everything the sun pass depends on. Nothing in it moving
--- means the shadow map it produced last frame is still exactly right, and
--- redrawing the whole world from the sun would buy nothing -- which is
--- most of a dialog, a menu, or any moment standing still.
-local sigBuf = {}
+-- Two stamps rather than one. Structural changes (meshes, view shape,
+-- pitch, sun) must refresh immediately. Camera and character motion may use
+-- the V-SRATE cadence: the map is world-anchored, so reusing it does not make
+-- a shadow slide with the screen; it only delays newly moved silhouettes.
+--
+-- Pose records are sorted by VALUE before they enter the motion stamp. The
+-- engine y-sorts entities every frame with no tie-breaker, so equal-y NPCs
+-- can swap list positions even though the set of casters is unchanged.
+-- Serialising raw list order made that harmless swap invalidate the entire
+-- world shadow map.
+local staticSigBuf, dynamicSigBuf, poseSigBuf = {}, {}, {}
 local function shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
-  local n = 0
-  local function put(v)
-    n = n + 1
-    sigBuf[n] = v
+  local sn, dn = 0, 0
+  local function static(v)
+    sn = sn + 1
+    staticSigBuf[sn] = v
   end
-  -- quarter-pixel camera granularity: the light frustum is snapped to
-  -- whole texels anyway, each a third of a world pixel
-  put(math.floor(cx * 4))
-  put(math.floor(cy * 4))
+  local function dynamic(v)
+    dn = dn + 1
+    dynamicSigBuf[dn] = v
+  end
+
   -- the view size and the camera PITCH are both what the light frustum is
   -- fitted to (a lower camera sees further north, so the box grows), so a
   -- zoom step, a window resize or a rung change invalidates the map even
   -- standing perfectly still
-  put(vw); put(vh)
-  put(math.floor((V.require("VoxelState").angle or 0) * 512))
+  static(vw); static(vh)
+  static(math.floor((V.require("VoxelState").angle or 0) * 512))
   -- the sun itself: the cycle swings the shear as the clock runs, and a map
   -- lit from somewhere new must be redrawn from there too. Quantised by the
   -- rig's own step (DayNight.rigTime), so a running cycle redraws the map a
   -- few times a minute rather than every frame.
-  put(math.floor(ShadowMap.KX * 128))
-  put(math.floor(ShadowMap.KZ * 128))
+  static(math.floor(ShadowMap.KX * 128))
+  static(math.floor(ShadowMap.KZ * 128))
   -- and the first-person head: the box is fitted around wherever it looks
   -- and the sprite cards swap frames as it circles them, so a turn on the
   -- spot re-fits and redraws exactly like a camera move ("" outside 1ST)
-  put(FirstPerson.signature())
-  put(tostring(terrain))
-  for i = 1, #nbMesh do put(tostring(nbMesh[i])) end
-  for _, p in ipairs(posed) do
-    put(p.sprite.def.image)
-    put(p.px); put(p.py); put(p.gh); put(p.lift or 0)
-    put(p.facing); put(p.phase); put(p.flip and 1 or 0)
+  static(FirstPerson.signature())
+  static(tostring(terrain))
+  for i = 1, #nbMesh do
+    static(tostring(nbMesh[i]))
   end
-  for i = n + 1, #sigBuf do sigBuf[i] = nil end
-  return table.concat(sigBuf, ",")
+
+  for i, p in ipairs(posed) do
+    poseSigBuf[i] = table.concat({
+      tostring(p.sprite.def.image),
+      tostring(p.px), tostring(p.py), tostring(p.gh),
+      tostring(p.lift or 0), tostring(p.facing), tostring(p.phase),
+      p.flip and "1" or "0",
+    }, "/")
+  end
+  for i = #posed + 1, #poseSigBuf do poseSigBuf[i] = nil end
+  table.sort(poseSigBuf)
+  for i = 1, #poseSigBuf do dynamic(poseSigBuf[i]) end
+
+  for i = sn + 1, #staticSigBuf do staticSigBuf[i] = nil end
+  for i = dn + 1, #dynamicSigBuf do dynamicSigBuf[i] = nil end
+  return table.concat(staticSigBuf, ","),
+         table.concat(dynamicSigBuf, ",")
+end
+
+-- Draw only spatial chunks intersecting the camera that beginScene installed.
+-- The test uses the exact per-frame view-projection matrix, so this helper is
+-- valid for every zoom, aspect ratio and placed camera. If chunk construction
+-- was unavailable, the complete mesh remains the correctness fallback.
+function VoxelScene.drawSpatial(fallback, chunks, texture, ox, oz, pull,
+                                sunModel)
+  ox, oz = ox or 0, oz or 0
+  local model = (ox ~= 0 or oz ~= 0) and Mat4.translate(ox, 0, oz) or nil
+  if type(chunks) == "table" and #chunks > 0 then
+    for _, chunk in ipairs(chunks) do
+      if chunk.mesh and Voxel3D.visible(chunk, ox, oz) then
+        Voxel3D.draw(chunk.mesh, texture, model, pull, sunModel)
+      end
+    end
+    return
+  end
+  if ChunkMesher.isChunkToken(fallback) then return end
+  Voxel3D.draw(fallback, texture, model, pull, sunModel)
 end
 
 -- The sun pass: render the scene once from the light, so the main pass can
@@ -786,79 +836,108 @@ end
 local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
                            atlasFor, water, nbWater, battleCards, battleToken)
   if not ShadowMap.available() then return end
-  local sig = shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
-  -- a staged fight's pics move every frame the animation does, and the sun
-  -- has to follow them (VR frames only; see render)
-  if battleToken then sig = sig .. "|btl" .. tostring(battleToken) end
-  if not ShadowMap.stale(sig) then return end
-  if not ShadowMap.begin(cx, cy, vw, vh) then return end
+  local staticSig, dynamicSig =
+    shadowSignature(terrain, nbMesh, posed, cx, cy, vw, vh)
+  -- VR battle cards move with their animation, so refresh only the cheap
+  -- actor layer when their token advances.
+  if battleToken then
+    dynamicSig = dynamicSig .. "|btl" .. tostring(battleToken)
+  end
+  if ShadowMap.staticStale(staticSig, cx, cy) then
+    if not ShadowMap.begin(cx, cy, vw, vh) then return end
 
-  ShadowMap.draw(terrain, atlasFor(state.map), nil)
-  for i, nb in ipairs(state.neighbors or {}) do
-    ShadowMap.draw(nbMesh[i], atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy))
-  end
-  -- The water surface, which the terrain mesh no longer carries (it is its
-  -- own reflective pass now -- see Water). The sun still has to see it, or
-  -- the map the light records has a hole at every lake and the frustum's
-  -- far plane answers for the surface a shoreline tree's shadow falls on.
-  ShadowMap.draw(water, atlasFor(state.map), nil)
-  for i, nb in ipairs(state.neighbors or {}) do
-    ShadowMap.draw(nbWater and nbWater[i], atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy))
-  end
-  -- flower billboards live outside the terrain mesh (they draw after the
-  -- characters, pulled -- see render), but the sun still sees them: a
-  -- handful of cutouts per meadow, unlike the grass left out below.
-  -- Every thin card from here down is SNUGGED toward the sun along its own
-  -- ray (ShadowMap.snug) so its shadow keeps contact with its feet instead
-  -- of starting a bias-width away.
-  ShadowMap.draw(ChunkMesher.flowers(state.map), atlasFor(state.map),
-                 ShadowMap.snug(nil))
-  for _, nb in ipairs(state.neighbors or {}) do
-    ShadowMap.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                   ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
-  end
-  -- From here down it is the CAST, marked as such in the map (see
-  -- ShadowMap.sprites) so water can decline them: everything the world casts
-  -- still shades a lake, a silhouette of somebody standing beside it does
-  -- not. Ground, roofs and the characters themselves take them as before.
-  ShadowMap.sprites(true)
-  -- authored figures cast too, for the same reason the flowers do: a
-  -- handful of cards per map, and a person with no shadow reads as pasted on
-  eachFigure(state.map, 0, 0, function(mesh, _, caster)
-    ShadowMap.draw(mesh, atlasFor(state.map), ShadowMap.snug(caster))
-  end)
-  for _, nb in ipairs(state.neighbors or {}) do
-    eachFigure(nb.map, nb.ox, nb.oy, function(mesh, _, caster)
-      ShadowMap.draw(mesh, atlasFor(nb.map), ShadowMap.snug(caster))
-    end)
-  end
-  for _, p in ipairs(posed) do
-    local def = p.sprite.def
-    -- viewFacing, exactly as the camera draw picks it (see viewFacing for
-    -- why the two passes must agree): in first person the sun's card
-    -- swaps frame as the eye circles, which costs a redraw the signature
-    -- already charges for (FirstPerson.signature) and keeps a card from
-    -- fringing against a mirror-flipped record of itself
-    local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
-    local mesh = SpriteBillboards.shadowQuad(def, frame)
-    if mesh then
-      ShadowMap.draw(mesh, p.sprite:resolveImage(),
-                     ShadowMap.snug(
-                       Voxel3D.casterMatrix(p.px, p.py, p.gh + (p.lift or 0),
-                                            mirror)))
+    local function drawTerrain(map, mesh, ox, oz)
+      local chunks = ChunkMesher.chunksForMesh(map, mesh)
+      local model = (ox ~= 0 or oz ~= 0) and Mat4.translate(ox, 0, oz) or nil
+      if chunks and #chunks > 0 then
+        for _, chunk in ipairs(chunks) do
+          if ShadowMap.visible(chunk, ox, oz) then
+            ShadowMap.draw(chunk.mesh, nil, model, true)
+          end
+        end
+        return
+      end
+      if ChunkMesher.isChunkToken(mesh) then return end
+      local bounds = {
+        x0 = -96, x1 = map.def.width * 32 + 96,
+        y0 = -32, y1 = ShadowMap.HEIGHT,
+        z0 = -96, z1 = map.def.height * 32 + 96,
+      }
+      if ShadowMap.visible(bounds, ox, oz) then
+        ShadowMap.draw(mesh, nil, model, true)
+      end
     end
-  end
-  -- a staged fight's mons (VR frames only): the same cards the eye pass
-  -- stands on the arena, snugged like every thin card, marked as the cast
-  -- so the water can decline them like everybody else's silhouette
-  for _, card in ipairs(battleCards or {}) do
-    ShadowMap.draw(BattleBillboard.mesh(), card.tex, ShadowMap.snug(card.model))
-  end
-  ShadowMap.sprites(false)
+    local function drawFlowers(map, ox, oz)
+      local chunks = ChunkMesher.flowerChunks(map)
+      local model = (ox ~= 0 or oz ~= 0) and Mat4.translate(ox, 0, oz) or nil
+      local sunModel = ShadowMap.snug(model)
+      if chunks and #chunks > 0 then
+        for _, chunk in ipairs(chunks) do
+          if ShadowMap.visible(chunk, ox, oz) then
+            ShadowMap.draw(chunk.mesh, atlasFor(map), sunModel)
+          end
+        end
+        return
+      end
+      ShadowMap.draw(ChunkMesher.flowers(map), atlasFor(map), sunModel)
+    end
 
-  ShadowMap.finish(sig)
+    drawTerrain(state.map, terrain, 0, 0)
+    for i, nb in ipairs(state.neighbors or {}) do
+      drawTerrain(nb.map, nbMesh[i], nb.ox, nb.oy)
+    end
+    -- Water is a separate reflective mesh in the main pass, but still part
+    -- of the static world the sun sees. It is opaque to the depth-only pass.
+    ShadowMap.draw(water, nil, nil, true)
+    for i, nb in ipairs(state.neighbors or {}) do
+      ShadowMap.draw(nbWater and nbWater[i], nil,
+                     Mat4.translate(nb.ox, 0, nb.oy), true)
+    end
+    -- Flowers and authored figures do not move in world space, so they live
+    -- with terrain. Their alpha cutout remains in this otherwise opaque pass.
+    drawFlowers(state.map, 0, 0)
+    for _, nb in ipairs(state.neighbors or {}) do
+      drawFlowers(nb.map, nb.ox, nb.oy)
+    end
+    -- Figures are static enough to cache with terrain, but remain people:
+    -- water ignores their classifier while ordinary surfaces receive them.
+    ShadowMap.sprites(true)
+    eachFigure(state.map, 0, 0, function(mesh, _, caster)
+      ShadowMap.draw(mesh, atlasFor(state.map), ShadowMap.snug(caster))
+    end)
+    for _, nb in ipairs(state.neighbors or {}) do
+      eachFigure(nb.map, nb.ox, nb.oy, function(mesh, _, caster)
+        ShadowMap.draw(mesh, atlasFor(nb.map), ShadowMap.snug(caster))
+      end)
+    end
+    ShadowMap.sprites(false)
+    ShadowMap.finishStatic(staticSig, cx, cy)
+  end
+
+  -- Moving cards get their own cheap depth layer through the SAME light
+  -- matrix. Updating this at 60 Hz no longer submits any route geometry.
+  if ShadowMap.actorStale(dynamicSig) and ShadowMap.beginActors() then
+    ShadowMap.sprites(true)
+    for _, p in ipairs(posed) do
+      local def = p.sprite.def
+      local frame, mirror = frameFor(def, viewFacing(p), p.phase, p.flip)
+      local mesh = SpriteBillboards.shadowQuad(def, frame)
+      if mesh then
+        ShadowMap.draw(mesh, p.sprite:resolveImage(),
+                       ShadowMap.snug(
+                         Voxel3D.casterMatrix(
+                           p.px, p.py, p.gh + (p.lift or 0), mirror)))
+      end
+    end
+    -- Staged VR combatants are moving cards too; keep them out of the cached
+    -- route layer and on the same actor layer as overworld characters.
+    for _, card in ipairs(battleCards or {}) do
+      ShadowMap.draw(BattleBillboard.mesh(), card.tex,
+                     ShadowMap.snug(card.model))
+    end
+    ShadowMap.sprites(false)
+    ShadowMap.finishActors(dynamicSig)
+  end
 end
 
 -- Render the world. Without `eyes`, one frame into one canvas -- the flat
@@ -956,10 +1035,13 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- about anything but their viewpoint.
   local function drawScene()
 
-  Voxel3D.draw(terrain, atlasFor(state.map), nil)
+  VoxelScene.drawSpatial(
+    terrain, ChunkMesher.chunksForMesh(state.map, terrain),
+    atlasFor(state.map), 0, 0)
   for i, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy))
+    VoxelScene.drawSpatial(
+      nbMesh[i], ChunkMesher.chunksForMesh(nb.map, nbMesh[i]),
+      atlasFor(nb.map), nb.ox, nb.oy)
   end
 
   -- Without a shadow map (headless, or a driver that could not make the
@@ -969,7 +1051,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- against the terrain just drawn (a shadow behind a building stays
   -- hidden) but never depth-writing, so the grass pass at the end of the
   -- frame still wins its feet-overdraw fights.
-  if not Voxel3D.shadowsActive() then
+  if not ShadowMap.actorsActive() then
     Voxel3D.beginShadows()
     for _, p in ipairs(posed) do
       drawShadow(p.sprite, p.px, p.py, viewFacing(p), p.phase, p.flip, p.gh,
@@ -1090,10 +1172,13 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- so the tuft rows keep exactly the characters' own depth handicap
   local lean = math.max(leanAngle(), 0.05)
   local pull = VoxelScene.pull(lean)
-  Voxel3D.draw(ChunkMesher.grass(state.map), atlasFor(state.map), nil, pull)
+  VoxelScene.drawSpatial(
+    ChunkMesher.grass(state.map), ChunkMesher.grassChunks(state.map),
+    atlasFor(state.map), 0, 0, pull)
   for _, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), pull)
+    VoxelScene.drawSpatial(
+      ChunkMesher.grass(nb.map), ChunkMesher.grassChunks(nb.map),
+      atlasFor(nb.map), nb.ox, nb.oy, pull)
   end
   -- flower billboards: pulled like the characters and the grass, MINUS
   -- the depth of 8 world pixels along the view (8 sin a -- the camera
@@ -1108,12 +1193,14 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local fpull = math.max(0, pull - 8 * math.sin(lean))
   -- flowers are snugged casters too, so they read their own shadowing
   -- through the same snugged transform the sun stored them with
-  Voxel3D.draw(ChunkMesher.flowers(state.map), atlasFor(state.map), nil,
-               fpull, ShadowMap.snug(nil))
+  VoxelScene.drawSpatial(
+    ChunkMesher.flowers(state.map), ChunkMesher.flowerChunks(state.map),
+    atlasFor(state.map), 0, 0, fpull, ShadowMap.snug(nil))
   for _, nb in ipairs(state.neighbors or {}) do
-    Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                 Mat4.translate(nb.ox, 0, nb.oy), fpull,
-                 ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+    local model = Mat4.translate(nb.ox, 0, nb.oy)
+    VoxelScene.drawSpatial(
+      ChunkMesher.flowers(nb.map), ChunkMesher.flowerChunks(nb.map),
+      atlasFor(nb.map), nb.ox, nb.oy, fpull, ShadowMap.snug(model))
   end
 
   -- The VR pokedex in the player's left hand, last of all: a prop over

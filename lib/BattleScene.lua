@@ -321,9 +321,45 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   if not ShadowMap.stale(sig) then return end
   if not ShadowMap.begin(cx, cy, vw, vh) then return end
 
-  ShadowMap.draw(terrain, atlasFor(host), nil)
+  local function drawTerrain(map, mesh, ox, oz)
+    local chunks = ChunkMesher.chunksForMesh(map, mesh)
+    local model = (ox ~= 0 or oz ~= 0) and Mat4.translate(ox, 0, oz) or nil
+    if chunks and #chunks > 0 then
+      for _, chunk in ipairs(chunks) do
+        if ShadowMap.visible(chunk, ox, oz) then
+          ShadowMap.draw(chunk.mesh, nil, model, true)
+        end
+      end
+      return
+    end
+    if ChunkMesher.isChunkToken(mesh) then return end
+    if ShadowMap.visible({
+      x0 = -96, x1 = map.def.width * 32 + 96,
+      y0 = -32, y1 = ShadowMap.HEIGHT,
+      z0 = -96, z1 = map.def.height * 32 + 96,
+    }, ox, oz) then
+      ShadowMap.draw(mesh, nil, model, true)
+    end
+  end
+
+  local function drawFlowers(map, ox, oz)
+    local chunks = ChunkMesher.flowerChunks(map)
+    local model = (ox ~= 0 or oz ~= 0) and Mat4.translate(ox, 0, oz) or nil
+    local sunModel = ShadowMap.snug(model)
+    if chunks and #chunks > 0 then
+      for _, chunk in ipairs(chunks) do
+        if ShadowMap.visible(chunk, ox, oz) then
+          ShadowMap.draw(chunk.mesh, atlasFor(map), sunModel)
+        end
+      end
+      return
+    end
+    ShadowMap.draw(ChunkMesher.flowers(map), atlasFor(map), sunModel)
+  end
+
+  drawTerrain(host, terrain, 0, 0)
   for i, nb in ipairs(neighbors) do
-    ShadowMap.draw(nbMesh[i], atlasFor(nb.map), Mat4.translate(nb.ox, 0, nb.oy))
+    drawTerrain(nb.map, nbMesh[i], nb.ox, nb.oy)
   end
   -- the water surface is its own reflective pass now (see Water) and so is
   -- no longer inside the terrain mesh; the sun still has to see it, or the
@@ -335,11 +371,9 @@ local function castShadows(state, arena, terrain, nbMesh, cx, cy, vw, vh,
   end
   -- thin cards are snugged toward the sun (ShadowMap.snug) so their shadows
   -- keep contact with their bases instead of starting a bias-width away
-  ShadowMap.draw(ChunkMesher.flowers(host), atlasFor(host),
-                 ShadowMap.snug(nil))
+  drawFlowers(host, 0, 0)
   for _, nb in ipairs(neighbors) do
-    ShadowMap.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                   ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+    drawFlowers(nb.map, nb.ox, nb.oy)
   end
 
   -- the mons themselves, as the same cards the camera will see. Their alpha
@@ -525,10 +559,13 @@ function BattleScene.render(state, arena, textures, token)
     if not Voxel3D.beginScene(rw, rh, cx, cy, vw, vh, sky, "battle") then
       return
     end
-    Voxel3D.draw(terrain, atlasFor(host), nil)
+    VoxelScene.drawSpatial(
+      terrain, ChunkMesher.chunksForMesh(host, terrain),
+      atlasFor(host), 0, 0)
     for i, nb in ipairs(neighbors) do
-      Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy))
+      VoxelScene.drawSpatial(
+        nbMesh[i], ChunkMesher.chunksForMesh(nb.map, nbMesh[i]),
+        atlasFor(nb.map), nb.ox, nb.oy)
     end
     -- and the water over it -- PLAIN, always: the flat animated tiles, never
     -- the reflective pass, whatever the WATER row says. The reflection is
@@ -582,18 +619,23 @@ function BattleScene.render(state, arena, textures, token)
     -- orbit's -- there is no character here for them to overdraw, but the
     -- pull is also what keeps a tuft from z-fighting the floor it stands on
     local pull = VoxelScene.pull(math.max(pitch, 0.05))
-    Voxel3D.draw(ChunkMesher.grass(host), atlasFor(host), nil, pull)
+    VoxelScene.drawSpatial(
+      ChunkMesher.grass(host), ChunkMesher.grassChunks(host),
+      atlasFor(host), 0, 0, pull)
     for _, nb in ipairs(neighbors) do
-      Voxel3D.draw(ChunkMesher.grass(nb.map), atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy), pull)
+      VoxelScene.drawSpatial(
+        ChunkMesher.grass(nb.map), ChunkMesher.grassChunks(nb.map),
+        atlasFor(nb.map), nb.ox, nb.oy, pull)
     end
     local fpull = math.max(0, pull - 8 * math.sin(math.max(pitch, 0.05)))
-    Voxel3D.draw(ChunkMesher.flowers(host), atlasFor(host), nil, fpull,
-                 ShadowMap.snug(nil))
+    VoxelScene.drawSpatial(
+      ChunkMesher.flowers(host), ChunkMesher.flowerChunks(host),
+      atlasFor(host), 0, 0, fpull, ShadowMap.snug(nil))
     for _, nb in ipairs(neighbors) do
-      Voxel3D.draw(ChunkMesher.flowers(nb.map), atlasFor(nb.map),
-                   Mat4.translate(nb.ox, 0, nb.oy), fpull,
-                   ShadowMap.snug(Mat4.translate(nb.ox, 0, nb.oy)))
+      local model = Mat4.translate(nb.ox, 0, nb.oy)
+      VoxelScene.drawSpatial(
+        ChunkMesher.flowers(nb.map), ChunkMesher.flowerChunks(nb.map),
+        atlasFor(nb.map), nb.ox, nb.oy, fpull, ShadowMap.snug(model))
     end
     local canvas = AntiAlias.resolve(Voxel3D.endScene(), pw, ph, "battle")
     if not canvas then return end
