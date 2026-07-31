@@ -74,3 +74,47 @@ the original game, as documented by the
 [pret/pokered](https://github.com/pret/pokered) disassembly. No ROM
 data, artwork or audio is included; the mod reads the assets the host
 game already has.
+
+Everything the battle screen draws as a box — the two HUD blocks, the text
+box and the menus over it — sits on frosted glass rather than on the white
+field it used to have behind it: the world underneath, blurred and laid back
+down translucent, with the ink flipping white where the ground it lands on is
+dark. Nothing the engine draws inside a box moves; only the paper is gone.
+
+### Graphics tuning
+
+The graphics rows leave the original renderer untouched until you choose a
+different rung. They remain available while **VOXEL** is **FULL**:
+
+| row | controls |
+|---|---|
+| **V-PRESET** | ORIGINAL / QUALITY / BALANCED / FAST / BATTERY / CUSTOM |
+| **V-RES** | internal 3D resolution: 100 / 83 / 75 / 67 / 50 percent |
+| **V-SHADOW** | original adaptive shadow map, fixed 1024 / 768 / 512, or OFF |
+| **V-SRATE** | maximum real-shadow refresh rate: LIVE / 60 / 30 / 20 / 15 |
+| **V-SOFT** | four-tap soft shadow edges or a one-tap hard edge |
+| **V-BUILD** | NORMAL / SMOOTH / MIN terrain-streaming time per frame |
+
+The measured 1080p starting points keep the scene native whenever shadows are
+enabled. **QUALITY** uses 512 soft shadows with 60 Hz character updates;
+**BALANCED** uses the same image quality at 30 Hz. Both retain **T-SHIFT 3**.
+**FAST** keeps native geometry and 30 Hz shadows but switches the soft filter
+and T-SHIFT off. **BATTERY** renders at 75%, disables real shadow maps and uses
+the lightweight character decals. Every row remains independently adjustable;
+changing one marks the aggregate preset as **CUSTOM**.
+
+The first visit to an uncached map may briefly show the original Gen 1 Kanto
+Town Map while the current terrain, connected-map bodies and shadow chunks are
+prepared. The destination uses the ROM-extracted location coordinates and
+blinks under the original cursor; stale asset builds retain the lightweight
+**BUILDING KANTO** fallback. Gameplay and input pause behind this cover, and
+the builder uses the time as a loading budget. T-SHIFT is temporarily bypassed
+for the cover so its pixel art stays sharp, without changing the saved setting.
+The outer letterbox uses the same pure black as Gen1Recomp's 4:3 menus; cached
+revisits and ordinary crossings remain seamless.
+
+Visible terrain, tall grass and flowers are camera-culled in spatial chunks.
+The culler uses the live camera matrix rather than a fixed screen rectangle,
+so every gameplay zoom, window aspect and battle camera receives the same
+exact-fidelity optimization. A conservative edge guard and whole-mesh fallback
+keep geometry from popping at the screen boundary or on limited drivers.
