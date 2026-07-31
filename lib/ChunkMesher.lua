@@ -55,6 +55,8 @@ local Structures = V.require("Structures")
 local TileShape = V.require("TileShape")
 local Voxel3D = V.require("Voxel3D")
 local Budget = V.require("BuildBudget")
+local GraphicsSettings = V.require("GraphicsSettings")
+local Perf = V.require("Perf")
 
 local ffi = nil
 do
@@ -63,6 +65,20 @@ do
 end
 
 local ChunkMesher = {}
+
+-- Once the ordinary camera draws the same spatial meshes as the shadow pass,
+-- retaining a second route-sized "whole" GPU mesh buys nothing. A unique
+-- lightweight token keeps the cache/request contract truthy and gives shadow
+-- signatures a stable build identity. If any chunk upload fails we build and
+-- retain the historical whole mesh instead, so this is an optimization rather
+-- than a new compatibility requirement.
+local function newChunkToken()
+  return { dramaticShapeChunks = true }
+end
+
+function ChunkMesher.isChunkToken(mesh)
+  return type(mesh) == "table" and mesh.dramaticShapeChunks == true
+end
 
 -- Ring of border blocks meshed around the body, matching the width
 -- TileRenderer draws so the two modes end at the same place.
@@ -93,6 +109,52 @@ local VOLUME_TOP_SHADE = 0.85
 
 local cache = {}     -- map id -> { full = mesh|false, body = ..., grass = ... }
 local gen = {}       -- map id -> generation, bumped by invalidate/evict
+local clock = (love and love.timer and love.timer.getTime) or os.clock
+
+-- GPU objects evicted at a map seam may still belong to the frame the driver
+-- is presenting. Releasing a whole old neighbourhood immediately makes the
+-- GL driver synchronize and destroy dozens of buffers in one update -- a rare
+-- but very visible long-travel hitch. Retire them after a few presented frames
+-- and drain while the world is covered or the player is idle. A soft limit
+-- prevents an uninterrupted cross-Kanto sprint from retaining buffers without
+-- bound. The cache forgets them immediately; this queue merely controls when
+-- their final release call lands.
+local retired, retiredHead, retiredTail = {}, 1, 0
+local pumpFrame = 0
+local RETIRE_DELAY = 4
+local RETIRE_IDLE_FRAMES = 12
+local RETIRE_SOFT_LIMIT = 128
+local lastMovingFrame = -RETIRE_IDLE_FRAMES
+
+local function retiredCount()
+  return math.max(0, retiredTail - retiredHead + 1)
+end
+
+local function retireMesh(mesh)
+  if not (mesh and mesh.release) then return end
+  retiredTail = retiredTail + 1
+  retired[retiredTail] = {
+    mesh = mesh,
+    ready = pumpFrame + RETIRE_DELAY,
+  }
+end
+
+local function drainRetired(limit)
+  local released = 0
+  while released < limit and retiredHead <= retiredTail do
+    local item = retired[retiredHead]
+    if item.ready > pumpFrame then break end
+    retired[retiredHead] = nil
+    retiredHead = retiredHead + 1
+    local started = Perf.now()
+    pcall(item.mesh.release, item.mesh)
+    Perf.add("ChunkMesher.release", started)
+    released = released + 1
+  end
+  if retiredHead > retiredTail then
+    retired, retiredHead, retiredTail = {}, 1, 0
+  end
+end
 
 -- Horizontal neighbours: tile step, face direction id (see Voxel3D).
 local SIDES = {
@@ -202,6 +264,66 @@ local function newSink()
     return newFfiSink()
   end
   return newTableSink()
+end
+
+-- Neither the light nor the view needs a whole route-sized mesh when its
+-- frustum overlaps only a few blocks around the camera. Keep a spatially
+-- partitioned copy of terrain for both passes. 128 world pixels is four Gen 1
+-- blocks: coarse enough to avoid a forest of draw calls, small enough that a
+-- long route no longer submits every vertex every frame.
+local SPATIAL_CHUNK = 128
+
+local function newSpatialChunkSink()
+  local groups = {}
+  return {
+    push = function(c, uv, shade)
+      local cx, cz = 0, 0
+      local x0, y0, z0 = math.huge, math.huge, math.huge
+      local x1, y1, z1 = -math.huge, -math.huge, -math.huge
+      for i = 1, 4 do
+        local p = c[i]
+        cx, cz = cx + p[1], cz + p[3]
+        x0, x1 = math.min(x0, p[1]), math.max(x1, p[1])
+        y0, y1 = math.min(y0, p[2]), math.max(y1, p[2])
+        z0, z1 = math.min(z0, p[3]), math.max(z1, p[3])
+      end
+      local gx = math.floor((cx * 0.25) / SPATIAL_CHUNK)
+      local gz = math.floor((cz * 0.25) / SPATIAL_CHUNK)
+      local key = gx .. ":" .. gz
+      local g = groups[key]
+      if not g then
+        g = { key = key, sink = newSink(),
+              x0 = x0, x1 = x1, y0 = y0, y1 = y1, z0 = z0, z1 = z1 }
+        groups[key] = g
+      else
+        g.x0, g.x1 = math.min(g.x0, x0), math.max(g.x1, x1)
+        g.y0, g.y1 = math.min(g.y0, y0), math.max(g.y1, y1)
+        g.z0, g.z1 = math.min(g.z0, z0), math.max(g.z1, z1)
+      end
+      g.sink.push(c, uv, shade)
+    end,
+    finish = function()
+      local ordered = {}
+      for _, g in pairs(groups) do ordered[#ordered + 1] = g end
+      table.sort(ordered, function(a, b) return a.key < b.key end)
+      local out = {}
+      local complete = true
+      for _, g in ipairs(ordered) do
+        local mesh = g.sink.finish()
+        if mesh then
+          out[#out + 1] = {
+            mesh = mesh,
+            x0 = g.x0, x1 = g.x1,
+            y0 = g.y0, y1 = g.y1,
+            z0 = g.z0, z1 = g.z1,
+          }
+        else
+          complete = false
+        end
+      end
+      return out, complete
+    end,
+  }
 end
 
 -- -------------------------------------------------------------- geometry
@@ -827,12 +949,34 @@ local function quadsMesh(quads)
   return Voxel3D.newMesh(verts, indices)
 end
 
+-- Chunk a prebuilt quad list (grass/flowers) through the same spatial packer
+-- as terrain. A whole-mesh fallback is only created if chunk uploads fail, so
+-- the dense grass fields do not live twice in memory.
+local function chunkedQuads(quads)
+  if #quads == 0 then return nil, {} end
+  local sink = newSpatialChunkSink()
+  for _, q in ipairs(quads) do
+    Budget.tick()
+    local uv = q.uv
+    if not uv then
+      uv = { { q.u, q.v }, { q.u, q.v }, { q.u, q.v }, { q.u, q.v } }
+    end
+    sink.push({ q[1], q[2], q[3], q[4] }, uv, q.shade)
+  end
+  local chunks, complete = sink.finish()
+  if complete and #chunks > 0 then return nil, chunks end
+  for _, chunk in ipairs(chunks) do
+    retireMesh(chunk.mesh)
+  end
+  return quadsMesh(quads), nil
+end
+
 -- The tall-grass rows as their own mesh: VoxelScene draws it AFTER the
 -- characters so the southern row of a grass cell still overdraws a
 -- walker's feet (characters stamp over terrain, Gen 1 style, so ordinary
 -- terrain could never do this).
-local function buildGrassMesh(map)
-  return quadsMesh(Structures.forMap(map).grassQuads)
+local function buildGrassMeshes(map)
+  return chunkedQuads(Structures.forMap(map).grassQuads)
 end
 
 -- The flower billboards as their own mesh, for the same reason as the
@@ -843,8 +987,8 @@ end
 -- stood among flowers. Unlike grass this mesh still CASTS shadows (the
 -- sun pass draws it): a handful of flowers per meadow, not thousands of
 -- tufts.
-local function buildFlowerMesh(map)
-  return quadsMesh(Structures.forMap(map).flowerQuads)
+local function buildFlowerMeshes(map)
+  return chunkedQuads(Structures.forMap(map).flowerQuads)
 end
 
 -- Authored FIGURES (a person drawn into furniture) as one mesh each, in
@@ -880,14 +1024,20 @@ end
 -- release cannot reach them.
 local function releaseFigures(list)
   for _, f in ipairs(type(list) == "table" and list or {}) do
-    if f.mesh and f.mesh.release then pcall(f.mesh.release, f.mesh) end
+    retireMesh(f.mesh)
+  end
+end
+
+local function releaseChunks(list)
+  for _, chunk in ipairs(type(list) == "table" and list or {}) do
+    retireMesh(chunk.mesh)
   end
 end
 
 -- Replace a cached slot, releasing whatever mesh it held.
 local function swapSlot(c, slot, mesh)
   local old = c[slot]
-  if old and old ~= mesh and old.release then pcall(old.release, old) end
+  if old and old ~= mesh then retireMesh(old) end
   c[slot] = mesh
 end
 
@@ -914,11 +1064,17 @@ local function releaseEntry(c)
   for _, slot in ipairs({ "full", "body", "fullWater", "bodyWater",
                           "grass", "flowers" }) do
     local mesh = c[slot]
-    if mesh and mesh.release then pcall(mesh.release, mesh) end
+    retireMesh(mesh)
     c[slot] = nil
   end
   releaseFigures(c.figures)
   c.figures = nil
+  releaseChunks(c.spatialFull)
+  releaseChunks(c.spatialBody)
+  releaseChunks(c.grassChunks)
+  releaseChunks(c.flowerChunks)
+  c.spatialFull, c.spatialBody = nil, nil
+  c.grassChunks, c.flowerChunks = nil, nil
   c.stale = nil
 end
 
@@ -926,8 +1082,6 @@ end
 
 local jobs = {}       -- FIFO of pending jobs
 local jobIndex = {}   -- "id:slot" -> job
-
-local clock = (love and love.timer and love.timer.getTime) or os.clock
 
 local function jobKey(id, slot)
   return id .. ":" .. slot
@@ -957,37 +1111,79 @@ end
 local function runJob(job)
   local map = job.map
   local c = entry(job.id)
-  if c.grass == nil or c.flowers == nil or c.figures == nil
+  if c.grass == nil or c.grassChunks == nil
+     or c.flowers == nil or c.flowerChunks == nil or c.figures == nil
      or (c.stale and c.stale.aux) then
-    local okG, grass = pcall(buildGrassMesh, map)
-    local okF, flowers = pcall(buildFlowerMesh, map)
+    job.phase = "grass"
+    local okG, grass, grassChunks = pcall(buildGrassMeshes, map)
+    job.phase = "flowers"
+    local okF, flowers, flowerChunks = pcall(buildFlowerMeshes, map)
+    job.phase = "figures"
     local okX, figures = pcall(buildFigureMeshes, map)
     if (gen[job.id] or 0) ~= job.gen then
-      if okG and grass and grass.release then pcall(grass.release, grass) end
-      if okF and flowers and flowers.release then
-        pcall(flowers.release, flowers)
-      end
+      if okG then retireMesh(grass) end
+      if okG then releaseChunks(grassChunks) end
+      if okF then retireMesh(flowers) end
+      if okF then releaseChunks(flowerChunks) end
       if okX then releaseFigures(figures) end
       return
     end
     swapSlot(c, "grass", (okG and grass) or false)
     swapSlot(c, "flowers", (okF and flowers) or false)
+    releaseChunks(c.grassChunks)
+    releaseChunks(c.flowerChunks)
+    c.grassChunks = (okG and grassChunks) or false
+    c.flowerChunks = (okF and flowerChunks) or false
     releaseFigures(c.figures)
     c.figures = (okX and figures) or false
     if c.stale then c.stale.aux = nil end
   end
-  local sink = newSink()
+  job.phase = "geometry"
+  local spatialSink = newSpatialChunkSink()
   local waterSink = newSink()
-  runGeometry(map, job.slot == "body", job.masks, sink, waterSink)
-  local mesh = sink.finish()
+  runGeometry(map, job.slot == "body", job.masks, spatialSink, waterSink)
+  job.phase = "upload"
+  local chunks, complete = spatialSink.finish()
   local water = waterSink.finish()
   if (gen[job.id] or 0) ~= job.gen then
-    if mesh and mesh.release then pcall(mesh.release, mesh) end
-    if water and water.release then pcall(water.release, water) end
+    releaseChunks(chunks)
+    retireMesh(water)
     return
   end
+
+  local mesh
+  if complete and #chunks > 0 then
+    mesh = newChunkToken()
+  elseif complete then
+    mesh = false
+  else
+    -- A partial spatial upload must never become partially missing scenery.
+    -- Discard it and build the old complete mesh as the compatibility path.
+    releaseChunks(chunks)
+    chunks = false
+    local fallback = newSink()
+    job.phase = "fallback-geometry"
+    -- Keep the already-built water mesh separate from the terrain fallback.
+    runGeometry(map, job.slot == "body", job.masks, fallback,
+                { push = function() end })
+    job.phase = "fallback-upload"
+    mesh = fallback.finish() or false
+  end
+  if (gen[job.id] or 0) ~= job.gen then
+    retireMesh(mesh)
+    releaseChunks(chunks)
+    retireMesh(water)
+    return
+  end
+
+  local spatialSlot = job.slot == "body" and "spatialBody" or "spatialFull"
+  -- Token/fallback and bounds land together. A refresh can invalidate while
+  -- uploads yield; publishing either half early could pair new geometry with
+  -- stale visibility data for a frame.
   swapSlot(c, job.slot, mesh or false)
   swapSlot(c, waterSlot(job.slot), water or false)
+  releaseChunks(c[spatialSlot])
+  c[spatialSlot] = chunks
   if c.stale then
     c.stale[job.slot] = nil
     if not (c.stale.full or c.stale.body or c.stale.aux) then
@@ -1025,17 +1221,29 @@ function ChunkMesher.pending()
   return #jobs
 end
 
+function ChunkMesher.maintenance(covered, moving)
+  pumpFrame = pumpFrame + 1
+  if moving then lastMovingFrame = pumpFrame end
+  local queued = retiredCount()
+  if covered then
+    drainRetired(24)
+  elseif queued > RETIRE_SOFT_LIMIT
+      or pumpFrame - lastMovingFrame >= RETIRE_IDLE_FRAMES then
+    drainRetired(1)
+  end
+end
+
 -- Advance queued builds inside a per-frame time budget. Urgent jobs (the
 -- current map) come first and get the larger slice -- the first voxel
 -- frame after a toggle is worth more milliseconds than a neighbour
 -- popping in one frame later. `covered` says the world pass is hidden
 -- this frame (a warp's fade, a menu): nothing visible can hitch, so the
 -- slice opens up and a door fade swallows most of a destination build.
-local URGENT_SLICE = 0.012
-local IDLE_SLICE = 0.005
-local COVERED_SLICE = 0.030
-
-function ChunkMesher.pump(covered)
+function ChunkMesher.pump(covered, sliceOverride, moving)
+  -- A hidden/loading frame can absorb a larger retirement batch. Visible
+  -- movement leaves the queue alone; idle gameplay drains one small buffer per
+  -- tick, keeping destruction work out of the frames where its hitch is seen.
+  ChunkMesher.maintenance(covered, moving)
   if #jobs == 0 then return end
   local pick = jobs[1]
   for _, j in ipairs(jobs) do
@@ -1044,16 +1252,23 @@ function ChunkMesher.pump(covered)
       break
     end
   end
-  local slice = covered and COVERED_SLICE
-                or (pick.urgent and URGENT_SLICE or IDLE_SLICE)
+  local limits = GraphicsSettings.buildBudget()
+  local slice = tonumber(sliceOverride)
+                or (covered and limits.covered
+                    or (pick.urgent and limits.urgent or limits.idle))
   local deadline = clock() + slice
   while pick do
     if not pick.co then
       pick.co = coroutine.create(runJob)
     end
     Budget.begin(pick.co, deadline - clock())
+    local resumeStarted = Perf.now()
     local ok, err = coroutine.resume(pick.co, pick)
     Budget.finish()
+    if resumeStarted then
+      Perf.add("ChunkMesher.build." .. tostring(pick.phase or "start"),
+               resumeStarted)
+    end
     if not ok then
       finishJob(pick, false, err)
     elseif coroutine.status(pick.co) == "dead" then
@@ -1081,22 +1296,46 @@ end
 function ChunkMesher.get(map, bodyOnly, masks)
   local slot = bodyOnly and "body" or "full"
   local c = entry(map.id)
-  if c.grass == nil or c.flowers == nil or (c.stale and c.stale.aux) then
-    local okG, grass = pcall(buildGrassMesh, map)
-    local okF, flowers = pcall(buildFlowerMesh, map)
+  if c.grass == nil or c.grassChunks == nil
+     or c.flowers == nil or c.flowerChunks == nil
+     or (c.stale and c.stale.aux) then
+    local okG, grass, grassChunks = pcall(buildGrassMeshes, map)
+    local okF, flowers, flowerChunks = pcall(buildFlowerMeshes, map)
     swapSlot(c, "grass", (okG and grass) or false)
     swapSlot(c, "flowers", (okF and flowers) or false)
+    releaseChunks(c.grassChunks)
+    releaseChunks(c.flowerChunks)
+    c.grassChunks = (okG and grassChunks) or false
+    c.flowerChunks = (okF and flowerChunks) or false
     if c.stale then c.stale.aux = nil end
   end
   if c[slot] == nil or (c.stale and c.stale[slot]) then
-    local ok, mesh, water = pcall(ChunkMesher.build, map, bodyOnly, masks,
-                                  true)
+    local ok, mesh, chunks, water = pcall(function()
+      local fallback = newSink()
+      local spatialSink = newSpatialChunkSink()
+      local waterSink = newSink()
+      runGeometry(map, bodyOnly, masks, {
+        push = function(corners, uv, shade)
+          fallback.push(corners, uv, shade)
+          spatialSink.push(corners, uv, shade)
+        end,
+      }, waterSink)
+      local built, complete = spatialSink.finish()
+      local whole = fallback.finish()
+      local waterMesh = waterSink.finish()
+      if complete then return whole, built, waterMesh end
+      releaseChunks(built)
+      return whole, false, waterMesh
+    end)
     if not ok then
       print("[warn] voxel mesh build failed for " .. tostring(map.id)
             .. ": " .. tostring(mesh))
     end
     swapSlot(c, slot, (ok and mesh) or false)
     swapSlot(c, waterSlot(slot), (ok and water) or false)
+    local spatialSlot = bodyOnly and "spatialBody" or "spatialFull"
+    releaseChunks(c[spatialSlot])
+    c[spatialSlot] = (ok and chunks) or false
     if c.stale then
       c.stale[slot] = nil
       if not (c.stale.full or c.stale.body or c.stale.aux) then
@@ -1142,12 +1381,40 @@ function ChunkMesher.flowers(map)
   return c and c.flowers or nil
 end
 
+function ChunkMesher.grassChunks(map)
+  local c = cache[map.id]
+  local list = c and c.grassChunks
+  return (type(list) == "table") and list or nil
+end
+
+function ChunkMesher.flowerChunks(map)
+  local c = cache[map.id]
+  local list = c and c.flowerChunks
+  return (type(list) == "table") and list or nil
+end
+
 -- Authored figures as `{ mesh, wx, wz, y, w }` records -- each placed by
 -- its own leaning matrix at draw time, so they cannot share one mesh.
 function ChunkMesher.figures(map)
   local c = cache[map.id]
   local list = c and c.figures
   return (type(list) == "table") and list or nil
+end
+
+-- Spatial meshes corresponding to the exact terrain mesh currently being
+-- drawn. A caller may be holding the body-only fallback while the full
+-- current-map mesh builds, or vice versa, so select by identity rather than
+-- by an assumed role.
+function ChunkMesher.chunksForMesh(map, mesh)
+  local c = cache[map.id]
+  if not (c and mesh) then return nil end
+  if mesh == c.full then
+    return type(c.spatialFull) == "table" and c.spatialFull or nil
+  end
+  if mesh == c.body then
+    return type(c.spatialBody) == "table" and c.spatialBody or nil
+  end
+  return nil
 end
 
 -- Rebuild a map's meshes IN PLACE: the stale meshes keep drawing while
@@ -1192,12 +1459,16 @@ end
 local prevLive = {}
 
 function ChunkMesher.setLive(live)
+  local started = Perf.now()
+  local evicted = 0
+  local queuedBefore = math.max(0, retiredTail - retiredHead + 1)
   for id, c in pairs(cache) do
     if not live[id] and not prevLive[id] then
       releaseEntry(c)
       cache[id] = nil
       gen[id] = (gen[id] or 0) + 1
       Structures.invalidate(id)
+      evicted = evicted + 1
     end
   end
   for i = #jobs, 1, -1 do
@@ -1208,6 +1479,12 @@ function ChunkMesher.setLive(live)
     end
   end
   prevLive = live
+  if evicted > 0 then
+    local queued = math.max(0, retiredTail - retiredHead + 1) - queuedBefore
+    Perf.count("ChunkMesher.evictedMaps", evicted)
+    Perf.count("ChunkMesher.retiredMeshes", queued)
+  end
+  Perf.add("ChunkMesher.setLive", started)
 end
 
 -- Drop one map's mesh (Cut swapped a block) or all of them (hot reload).

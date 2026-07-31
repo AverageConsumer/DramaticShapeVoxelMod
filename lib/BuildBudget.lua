@@ -20,6 +20,7 @@ local clock = (love and love.timer and love.timer.getTime) or os.clock
 
 local deadline = math.huge
 local buildCo = nil
+local checkEvery = 32
 
 -- Enter/leave a pumped slice. `co` is the coroutine being resumed, so
 -- tick() can tell the build apart from any other coroutine the engine
@@ -27,23 +28,29 @@ local buildCo = nil
 function B.begin(co, seconds)
   buildCo = co
   deadline = clock() + seconds
+  -- Visible NORMAL/SMOOTH/MIN slices are all at most 12 ms. Their deadline
+  -- has to be strict: one Structures iteration can take several milliseconds,
+  -- so batching 32 checks let a nominal 5-ms neighbour slice run for 100+ ms.
+  -- Covered/loading slices are deliberately wide and may keep the cheaper
+  -- sampled clock check.
+  checkEvery = seconds <= 0.015 and 1 or 32
 end
 
 function B.finish()
   buildCo = nil
   deadline = math.huge
+  checkEvery = 32
 end
 
 function B.expired()
   return clock() > deadline
 end
 
--- Cheap enough to sprinkle through inner loops: one modulo most calls,
--- a clock read every 32nd.
+-- Visible streaming checks every call; hidden loading work checks every 32nd.
 function B.tick()
   local n = B.n + 1
   B.n = n
-  if n % 32 ~= 0 then return end
+  if checkEvery > 1 and n % checkEvery ~= 0 then return end
   if buildCo and coroutine.running() == buildCo and clock() > deadline then
     coroutine.yield("budget")
   end

@@ -199,7 +199,10 @@ local function read(t, data, perRow)
     if not sealed("w") then seed(0, y) end
     if not sealed("e") then seed(W - 1, y) end
   end
+  local floodSteps = 0
   while n > 0 do
+    floodSteps = floodSteps + 1
+    if floodSteps % 64 == 0 then Budget.tick() end
     local i = queue[n]
     n = n - 1
     local x, y = i % W, math.floor(i / W)
@@ -210,7 +213,10 @@ local function read(t, data, perRow)
   end
 
   local inside = {}
-  for i = 0, W * H - 1 do inside[i] = not outside[i] end
+  for i = 0, W * H - 1 do
+    if i % 128 == 0 then Budget.tick() end
+    inside[i] = not outside[i]
+  end
 
   -- `scrub` names pixel rects where the drawing paints an object standing
   -- ON the surface (Red's potted plant on the dining tabletop). The object
@@ -257,6 +263,7 @@ local function measure(sp, t)
   -- far the roof has stepped down by the time it reaches that column.
   local top = {}
   for x = 0, W - 1 do
+    Budget.tick()
     local r = roofRows
     for y = 0, roofRows - 1 do
       if sp.inside[y * W + x] then r = y break end
@@ -289,6 +296,7 @@ local function measure(sp, t)
   -- colour, which is what the flanks of the real thing would show.
   local interior = {}
   for sy = roofRows, H - 1 do
+    Budget.tick()
     for sx = 0, W - 1 do
       local i = sy * W + sx
       local src = i
@@ -316,6 +324,7 @@ local function measure(sp, t)
   -- window) layers for free.
   local recess, seen = {}, {}
   for sy = roofRows, H - 1 do
+    Budget.tick()
     for sx = 0, W - 1 do
       local i0 = sy * W + sx
       if not seen[i0] and sp.inside[i0] and sp.col[i0] ~= BLACK then
@@ -330,7 +339,10 @@ local function measure(sp, t)
             stack[#stack + 1] = ni
           end
         end
+        local regionSteps = 0
         while #stack > 0 do
+          regionSteps = regionSteps + 1
+          if regionSteps % 64 == 0 then Budget.tick() end
           local i = table.remove(stack)
           cells[#cells + 1] = i
           local cx, cy = i % W, math.floor(i / W)
@@ -344,7 +356,10 @@ local function measure(sp, t)
           step(cx, cy - 1)
         end
         if x1 - x0 < RECESS_MAX and y1 - y0 < RECESS_MAX then
-          for _, i in ipairs(cells) do recess[i] = true end
+          for ci, i in ipairs(cells) do
+            if ci % 64 == 0 then Budget.tick() end
+            recess[i] = true
+          end
         end
       end
     end
@@ -364,6 +379,7 @@ local function measure(sp, t)
   -- whatever SGB recolouring the atlas carries).
   local shadeTexel = {}
   for i = 0, sp.W * sp.H - 1 do
+    if i % 128 == 0 then Budget.tick() end
     if sp.inside[i] and not shadeTexel[sp.col[i]] then
       shadeTexel[sp.col[i]] = i
     end
@@ -889,6 +905,7 @@ local function model(sp, pr, t)
   -- box edge.
   local x0d, x1d
   for x = 0, W - 1 do
+    Budget.tick()
     if top[x] < roofRows then
       x0d = x0d or x
       x1d = x
@@ -910,6 +927,7 @@ local function model(sp, pr, t)
   -- continues both the course lines and the roof texture seamlessly.
   local roofSy = {}
   for z = rz0, rz1 do
+    Budget.tick()
     local df, db = z - rz0, rz1 - z          -- from the north / south edge
     if df < back then
       roofSy[z] = df
@@ -921,7 +939,10 @@ local function model(sp, pr, t)
   end
 
   local T = {}
-  for x = 0, W - 1 do T[x] = ytop - top[x] end
+  for x = 0, W - 1 do
+    Budget.tick()
+    T[x] = ytop - top[x]
+  end
 
   local function at(x, y, z)
     if x < 0 or x >= W then return nil end
@@ -1010,8 +1031,8 @@ local function emit(m, sp, atlasW, atlasH)
     return cell[(y * zn + (z - zmin)) * W + x]
   end
   for y = 0, ytop do
-    Budget.tick()
     for z = zmin, zmax do
+      Budget.tick()
       local base = (y * zn + (z - zmin)) * W
       for x = 0, W - 1 do
         local v = m.at(x, y, z)
@@ -1024,8 +1045,8 @@ local function emit(m, sp, atlasW, atlasH)
   -- derived from the quads because it is the number
   -- tools/building_voxels.py checks this build against.
   for y = 0, ytop do
-    Budget.tick()
     for z = zmin, zmax do
+      Budget.tick()
       for x = 0, W - 1 do
         if ci(x, y, z) and not (ci(x + 1, y, z) and ci(x - 1, y, z)
             and ci(x, y + 1, z) and ci(x, y - 1, z)
@@ -1081,8 +1102,8 @@ local function emit(m, sp, atlasW, atlasH)
   for _, d in ipairs({ 1, -1 }) do
     local shade = d == 1 and SHADE.south or SHADE.north
     for y = 0, ytop do
-      Budget.tick()
       for z = zmin, zmax do
+        Budget.tick()
         local x = 0
         while x < W do
           if ci(x, y, z) and not ci(x, y, z + d) then
@@ -1111,10 +1132,10 @@ local function emit(m, sp, atlasW, atlasH)
   for _, d in ipairs({ 1, -1 }) do
     local shade = d == 1 and SHADE.top or SHADE.bottom
     for y = 0, ytop do
-      Budget.tick()
       -- the underside of the bottom layer is the ground it stands on
       if not (d == -1 and y == 0) then
         for z = zmin, zmax do
+          Budget.tick()
           local x = 0
           while x < W do
             if ci(x, y, z) and not ci(x, y + d, z) then
@@ -1144,6 +1165,7 @@ local function emit(m, sp, atlasW, atlasH)
   for _, d in ipairs({ 1, -1 }) do
     for y = 0, ytop do
       for x = 0, W - 1 do
+        Budget.tick()
         local z = zmin
         while z <= zmax do
           local i = ci(x, y, z)
@@ -1328,7 +1350,11 @@ function Buildings.stamp(S, map, quads, tx, ty, bw, bh, t)
 
   local mx, mz = tx * 8, ty * 8
   local out = S.objectQuads
-  for _, q in ipairs(quads) do
+  for qi, q in ipairs(quads) do
+    -- Copying a large authored building can allocate thousands of quad
+    -- tables. Keep placement cooperative too: previously this single loop
+    -- could overrun a visible neighbour's entire frame budget by 60-120 ms.
+    if qi % 16 == 1 then Budget.tick() end
     out[#out + 1] = {
       { q[1][1] + mx, q[1][2], q[1][3] + mz },
       { q[2][1] + mx, q[2][2], q[2][3] + mz },
