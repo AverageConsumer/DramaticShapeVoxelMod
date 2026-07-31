@@ -21,6 +21,8 @@
 -- Purely presentational, like tilt and survey zoom: nothing here reaches
 -- collision, movement, triggers or scripts.
 
+local V = ...
+local Perf = V.require("Perf")
 local Voxel = {}
 
 -- FULL is a PRESET, not another angle: one rung that puts the whole mode in
@@ -113,6 +115,36 @@ Voxel.t = 1
 -- the whole frame for seconds).
 Voxel.ready = true
 
+-- A destination with no cached terrain must not leak the vanilla 2D map while
+-- its first voxel meshes build. VoxelScene latches this state until every job
+-- requested for the visible neighbourhood has landed; the pipeline shows the
+-- lightweight loading canvas and gives the cooperative mesher its covered
+-- budget in the meantime.
+Voxel.loading = false
+Voxel.loadingMap = nil
+Voxel.loadingSince = 0
+
+local clock = (love and love.timer and love.timer.getTime) or os.clock
+local loadingPerfStart = nil
+
+function Voxel.beginLoading(mapId)
+  if Voxel.loading and Voxel.loadingMap == mapId then return end
+  Voxel.loading = true
+  Voxel.loadingMap = mapId
+  Voxel.loadingSince = clock()
+  loadingPerfStart = Perf.now()
+  Voxel.ready = false
+end
+
+function Voxel.finishLoading(mapId)
+  if mapId and Voxel.loadingMap ~= mapId then return end
+  if Voxel.loading then Perf.add("VoxelLoading.total", loadingPerfStart) end
+  Voxel.loading = false
+  Voxel.loadingMap = nil
+  Voxel.loadingSince = 0
+  loadingPerfStart = nil
+end
+
 Voxel.TWEEN_TIME = 0.25
 -- Camera distance as a multiple of the view height, and the matching field
 -- of view. Kept equal to Tilt.FOCAL so a given angle frames the world the
@@ -132,6 +164,7 @@ function Voxel.setLevel(level)
   if level < 0 then level = 0 end
   if level > Voxel.MAX_LEVEL then level = Voxel.MAX_LEVEL end
   local goal = goalFor(level)
+  if goal <= 0 then Voxel.finishLoading() end
   if goal ~= Voxel.goal or level ~= Voxel.level then
     Voxel.from = Voxel.angle
     Voxel.goal = goal
@@ -148,6 +181,7 @@ end
 function Voxel.reset()
   Voxel.level, Voxel.angle = 0, 0
   Voxel.from, Voxel.goal, Voxel.t = 0, 0, 1
+  Voxel.finishLoading()
 end
 
 function Voxel.levelLabel(level)
