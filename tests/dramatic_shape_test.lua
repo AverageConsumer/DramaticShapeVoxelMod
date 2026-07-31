@@ -120,14 +120,10 @@ local VoxelState = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelState")
 
 -- ------- FULL is a preset that owns the rows describing the LOOK
 --
--- While it is selected the settings it drives come OFF the menu -- including
--- T-SHIFT, which is a pipeline row the engine spliced in. A row that no
--- longer decides anything is worse than no row.
---
--- The two BATTLE rows are the exception and stay. 3D-BTL decides what a fight
--- is drawn over and BACK SPRITES how it is framed; neither is a knob on the
--- diorama the preset is a preset FOR. FULL sets them on arrival and then lets
--- go, which is what makes it a preset rather than a lock.
+-- While it is selected the authored scene-style settings it drives come OFF
+-- the menu. T-SHIFT, renderer quality and both battle rows remain reachable:
+-- FULL supplies their starting values and then lets go, which is what makes it
+-- a preset rather than a lock.
 Pipelines.setLevel("voxel", VoxelState.FULL_LEVEL)
 local fullRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                               { data = Data },
@@ -136,11 +132,50 @@ local fullRows = Runtime.call("ui.options.rows", function(_, r) return r end,
 local fullIds = {}
 for _, row in ipairs(fullRows) do fullIds[row.id] = true end
 T.check(fullIds["pipeline:voxel"], "FULL keeps the VOXEL row it lives on")
-T.check(not fullIds["pipeline:tiltshift"],
-  "FULL takes T-SHIFT off the menu -- it owns the blur")
+T.check(fullIds["pipeline:tiltshift"],
+  "FULL leaves T-SHIFT reachable so its fullscreen cost can be tuned")
 T.check(not fullIds["DRAMATIC_SHAPE:grid"], "and V-GRID")
 T.check(not fullIds["DRAMATIC_SHAPE:curve"], "and V-CURVE")
 T.check(not fullIds["DRAMATIC_SHAPE:daytime"], "and DAYTIME")
+T.check(fullIds["DRAMATIC_SHAPE:graphicsPreset"],
+  "FULL leaves GPU quality controls reachable")
+T.check(fullIds["DRAMATIC_SHAPE:renderScale"], "including internal resolution")
+T.check(fullIds["DRAMATIC_SHAPE:shadowQuality"], "and shadow resolution")
+
+-- The new controls are opt-in: an old save with none of their keys takes
+-- the exact historical path until the player chooses a preset or a rung.
+do
+  local Graphics =
+    run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings")
+  T.eq(Graphics.preset:get(), "original", "graphics preset defaults to ORIGINAL")
+  T.eq(Graphics.renderScale(), 1, "ORIGINAL renders at native resolution")
+  local shadowSizes = Graphics.shadowSizes()
+  T.eq(#shadowSizes, 3, "ORIGINAL keeps the adaptive shadow ladder")
+  T.eq(shadowSizes[1], 1024, "the original ladder still starts at 1024")
+  T.eq(shadowSizes[3], 2048, "and still tops out at 2048")
+  T.eq(Graphics.softShadowEnabled(), true,
+    "ORIGINAL keeps the four-tap soft shadow")
+  T.eq(Graphics.buildBudget().urgent, 0.012,
+    "ORIGINAL keeps the historical urgent mesh slice")
+
+  local qualityGame = {
+    save = { options = { modOptions = {} } },
+    mods = { modOptions = {} },
+    writeOptions = function() end,
+  }
+  Graphics.preset:setIndex(1, qualityGame)
+  Graphics.preset:row().step(qualityGame, 1)
+  T.eq(Graphics.preset:get(), "quality", "preset row advances to QUALITY")
+  T.eq(Graphics.renderScale(), 1, "QUALITY keeps the measured native render scale")
+  T.eq(Graphics.shadowSizes()[1], 512, "QUALITY selects a fixed 512 shadow map")
+
+  Graphics.resolution:row().step(qualityGame, 1)
+  T.eq(Graphics.preset:get(), "custom",
+    "stepping an individual graphics row marks the preset CUSTOM")
+
+  Graphics.preset:setIndex(1, qualityGame)
+  Graphics.optionChanged(Graphics.preset.key, qualityGame)
+end
 
 -- but the battle rows survive it: they are not knobs on the look, and FULL
 -- sets them once rather than holding them, so a player who wants the classic
@@ -306,7 +341,8 @@ local order = {}
 for i, row in ipairs(grouped) do order[row.id] = i end
 T.check(order["pipeline:tiltshift"] < order["DRAMATIC_SHAPE:grid"],
   "the mode's settings follow its pipeline rows")
-T.eq(order["DRAMATIC_SHAPE:battles"] - order["pipeline:tiltshift"], 4,
+T.eq(order["DRAMATIC_SHAPE:battles"] - order["pipeline:tiltshift"],
+  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 4,
   "and sit in one unbroken block, not scattered to the end of the list")
 T.check(order["void_fill"] > order["DRAMATIC_SHAPE:battles"],
   "with the engine's own later rows still after them")
@@ -343,7 +379,8 @@ pressed = {}
 T.eq(Pipelines.level("voxel"), 1, "the step landed on FULL")
 T.check(not rowIndex(menu, "DRAMATIC_SHAPE:grid"),
   "and the rows FULL owns left the OPEN menu at once")
-T.check(not rowIndex(menu, "pipeline:tiltshift"), "T-SHIFT with them")
+T.check(rowIndex(menu, "pipeline:tiltshift"),
+  "while the independently tunable T-SHIFT row stays reachable")
 T.check(menu.index <= #menu.rows + 1, "the cursor stayed in range")
 
 -- and back off it again
@@ -387,11 +424,17 @@ end
 Pipelines.setLevel("voxel", 2)
 local hookedRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                                { data = Data }, { { id = "text_speed" } })
-T.eq(#hookedRows, 9, "the options hook added a row per setting")
-local grid, curve, water = hookedRows[2], hookedRows[3], hookedRows[4]
-local battles, backRow, daytime = hookedRows[5], hookedRows[6], hookedRows[7]
--- the AA row is hookedRows[8]; it is read in its own block below, because
--- this chunk is one main function and has 200 local slots to spend
+T.eq(#hookedRows,
+  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 9,
+  "the options hook added a row per setting")
+hookedRows.byId = {}
+for _, row in ipairs(hookedRows) do hookedRows.byId[row.id] = row end
+local grid = hookedRows.byId["DRAMATIC_SHAPE:grid"]
+local curve = hookedRows.byId["DRAMATIC_SHAPE:curve"]
+local water = hookedRows.byId["DRAMATIC_SHAPE:water"]
+local battles = hookedRows.byId["DRAMATIC_SHAPE:battles"]
+local backRow = hookedRows.byId["DRAMATIC_SHAPE:battleBack"]
+local daytime = hookedRows.byId["DRAMATIC_SHAPE:daytime"]
 T.eq(water.label, "WATER", "the water row carries its label")
 T.eq(water.value(), "FULL",
   "and defaults to FULL -- reflections are the point of having the row")
@@ -480,7 +523,7 @@ do
 local AntiAlias = run.loader.exports.DRAMATIC_SHAPE.lib.require("AntiAlias")
 local VoxelGrid = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelGrid")
 local aaGame = { save = { options = {} }, mods = { modOptions = {} } }
-local aa = hookedRows[8]
+local aa = hookedRows.byId["DRAMATIC_SHAPE:aa"]
 T.eq(aa.label, "AA", "the anti-aliasing row carries its label")
 T.eq(aa.value(), "OFF",
   "and starts off -- supersampling is a cost knob, and a mod must not spend "

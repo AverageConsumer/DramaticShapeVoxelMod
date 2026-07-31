@@ -533,6 +533,17 @@
   pins stay only as the degradation path when the shape profile is
   absent.
 
+## Unreleased Android performance update
+
+- Adds opt-in renderer presets and independent controls without changing the
+  original defaults.
+- Streams and camera-culls spatial terrain, grass, flower and shadow chunks.
+- Separates static terrain shadows from moving actor shadows and removes
+  redundant shadow-map allocation and sampling work.
+- Builds uncached areas cooperatively behind a native-style loading cover.
+- Bounds map residency and retires old GPU buffers outside visible movement.
+- Preserves the 1.4.0 water reflections, battle presentation and day/night tint.
+
 ## 1.4.0
 
 ### Added
@@ -877,7 +888,6 @@
   `PixelCanvas` does for the same reason. The animated-tile atlas readback took
   the same fix: on a phone it would have come back magnified too, and every
   tile coordinate in it counts in eights from the top-left.
-
 ## 1.3.0
 
 ### Added

@@ -93,6 +93,9 @@ local AntiAlias = V.require("AntiAlias")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local VR = V.require("VR")
+local GraphicsSettings = V.require("GraphicsSettings")
+local VoxelLoading = V.require("VoxelLoading")
+local Perf = V.require("Perf")
 
 -- Forward declaration: the voxel pipeline's update hook (registered below)
 -- calls this, and it is defined further down with the settings it drives.
@@ -208,14 +211,38 @@ mod.content.render_pipelines:register("voxel", {
     -- Ahead of the active() gate: with the mode off, the headset still
     -- shows the flat screen on the floating panel.
     VR.update(dt)
-    if not Voxel.active() then return end
+    if not Voxel.active() then
+      -- Turning the mode off can evict the last scene's GPU buffers. Keep the
+      -- deferred retirement queue moving even though no voxel build runs.
+      ChunkMesher.maintenance(true)
+      return
+    end
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
     if ow and ow.map and ow.camera then
+      local started = Perf.now()
+      pcall(VoxelScene.prefetch, ow)
+      Perf.add("VoxelScene.prefetch", started)
+    end
+    local covered = Game and Game.stack and Game.stack:top() ~= ow
+    local player = ow and ow.player
+    local moving = player and (player.moving
+      or ((tonumber(player.bumpFrames) or 0) > 0)) or false
+    -- A latched first build owns the screen just like a transition does, so
+    -- spend the wider covered slice instead of preserving frame time for a
+    -- 3D scene nobody can see.
+    -- Fifty milliseconds deliberately targets a simple ~20 Hz loading cover:
+    -- no 3D scene is being presented, so spending the otherwise-idle frame
+    -- here cuts first-entry wall time without turning gameplay frames into
+    -- hitches.
+    ChunkMesher.pump(covered or Voxel.loading,
+                     Voxel.loading and 0.050 or nil, moving)
+    -- pump() may have landed the last mesh. Re-read the cache now so a small
+    -- destination that finishes inside the door fade never flashes the
+    -- loading canvas for one otherwise-empty frame.
+    if Voxel.loading and ow and ow.map and ow.camera then
       pcall(VoxelScene.prefetch, ow)
     end
-    ChunkMesher.pump(Game and Game.stack
-                     and Game.stack:top() ~= ow)
   end,
 
   drawWorld = function(ctx)
@@ -234,19 +261,25 @@ mod.content.render_pipelines:register("voxel", {
     end
     -- Terrain and characters are geometry; the field FX stay ordinary 2D
     -- draws composited on top, anchored through the same camera the 3D
-    -- pass used (ctx.drawFx below).  The scene renders at the window's
-    -- PIXEL resolution (see sceneSize) so the 3D pass is crisp rather than
-    -- a magnified low-res image, while the FX closures keep drawing in
-    -- world-pixel units.
+    -- pass used (ctx.drawFx below). ORIGINAL renders at the window's PIXEL
+    -- resolution; lower V-RES rungs render the expensive 3D pass smaller
+    -- and nearest-upscale it to the native-sized canvas the Android
+    -- compositor requires. The FX closures follow the same internal scale.
     local sw, sh = sceneSize(ctx)
+    if Voxel.loading then
+      return VoxelLoading.draw(sw, sh, ChunkMesher.pending())
+    end
+    local qw, qh = GraphicsSettings.renderSize(sw, sh)
     -- With AA on, the whole pass runs into a canvas BIGGER than the window
     -- and is folded back down at the end (see AntiAlias).  Nothing between
     -- these two lines knows: every pass in the frame measures itself in the
     -- canvas it was handed, so the sky's dither, the water's march and the
     -- camera itself all come out the same picture at a higher sample rate.
-    local rw, rh = AntiAlias.expand(sw, sh)
+    local rw, rh = AntiAlias.expand(qw, qh)
+    local started = Perf.now()
     local canvas = VoxelScene.render(ctx.state, rw, rh,
                                      ctx.vw, ctx.vh, ctx.paletteFor)
+    Perf.add("VoxelScene.render", started)
     if not canvas then return nil end   -- fall back to the 2D path
     if Voxel3D.beginOverlay() then
       -- the FX closures are ordinary 2D draws sized in DISPLAY pixels, and
@@ -255,16 +288,19 @@ mod.content.render_pipelines:register("voxel", {
       -- right place at half the size.  project() already answers in canvas
       -- pixels, so only the scale needs saying.
       ctx.drawFx(function(wx, wy) return Voxel3D.project(wx, 0, wy) end,
-                 ctx.scale * AntiAlias.factor())
+                 ctx.scale * math.min(rw / sw, rh / sh))
       Voxel3D.endOverlay()
     end
     -- and back to the window's own size, which is what the engine composites
     -- one canvas pixel to one display pixel.  A pass-through when AA is off.
-    return AntiAlias.resolve(canvas, sw, sh, "world")
+    canvas = AntiAlias.resolve(canvas, qw, qh, "world")
+    return GraphicsSettings.present(canvas, sw, sh)
   end,
 
   invalidate = function()
     Voxel3D.invalidate()
+    GraphicsSettings.invalidate()
+    VoxelLoading.invalidate()
     OverworldBattle.invalidate()
     AntiAlias.invalidate()
     ChunkMesher.invalidate()   -- no map id = every cached mesh
@@ -285,9 +321,12 @@ mod.content.render_pipelines:register("tiltshift", {
   end,
 
   -- worldPresent, not present: the blur belongs on the diorama, not on the
-  -- dialog box in front of it.  A pass-through when the level is 0 or the
-  -- shader is unavailable, so the frame is untouched in every other case.
+  -- dialog box in front of it.  The loading cover is deliberately pixel art,
+  -- so leave that canvas sharp without changing the player's T-SHIFT level.
+  -- A pass-through when the level is 0 or the shader is unavailable keeps the
+  -- frame untouched in every other case.
   worldPresent = function(canvas)
+    if Voxel.loading then return canvas end
     return TiltShift.apply(canvas)
   end,
 
@@ -295,6 +334,23 @@ mod.content.render_pipelines:register("tiltshift", {
     TiltShift.invalidate()
   end,
 })
+
+-- Freeze gameplay while an uncached destination owns the loading cover.
+-- Pipelines.update is driven by Game independently of the top state's update,
+-- so prefetch and ChunkMesher.pump continue making progress while scripts,
+-- encounters and invisible player movement stand still. Cached crossings never
+-- enter this branch.
+do
+  local OverworldController = require("src.world.OverworldController")
+  if not OverworldController.dramaticShapeLoadingHook then
+    local inner = OverworldController.update
+    function OverworldController:update(dt)
+      if Voxel.loading then return end
+      return inner(self, dt)
+    end
+    OverworldController.dramaticShapeLoadingHook = true
+  end
+end
 
 -- ------- this mod's own settings
 --
@@ -327,9 +383,12 @@ applyFull = function(level)
   local opts = Game.save and Game.save.options
   if not opts then return end
 
-  -- the miniature blur at its strongest: FULL is the diorama look, and the
-  -- tilt-shift is most of what makes it read as a model
-  Pipelines.setLevel("tiltshift", Pipelines.maxLevel("tiltshift"))
+  -- The original/quality look starts the miniature blur at its strongest.
+  -- Faster graphics presets explicitly trade it away; CUSTOM leaves the
+  -- independently tuned T-SHIFT row alone.
+  local blur = GraphicsSettings.fullTiltShiftLevel(
+    Pipelines.maxLevel("tiltshift"))
+  if blur ~= nil then Pipelines.setLevel("tiltshift", blur) end
   Pipelines.syncOptions(opts)
   -- the horizon flat. The curve bends the world away from a walking player,
   -- which fights a fixed diorama framing
@@ -384,7 +443,7 @@ local function stagedBattles()
   return OverworldBattle.enabled()
 end
 
-local SETTINGS = {
+local OWNED_SETTINGS = {
   { VoxelGrid.setting, "One-pixel wireframe along every voxel edge." },
   { WorldCurve.setting,
     "Bend the world down over the horizon, Animal Crossing style." },
@@ -446,6 +505,14 @@ local SETTINGS = {
     -- and the row does not exist
     when = function() return VR.supported() end, full = true },
 }
+
+local SETTINGS = {}
+for _, entry in ipairs(GraphicsSettings.entries) do
+  SETTINGS[#SETTINGS + 1] = { entry[1], entry[2], full = true }
+end
+for _, entry in ipairs(OWNED_SETTINGS) do
+  SETTINGS[#SETTINGS + 1] = entry
+end
 
 local schema = {}
 for _, entry in ipairs(SETTINGS) do
@@ -535,6 +602,10 @@ do
   local inner = Game.keypressed
 
   function Game:keypressed(key)
+    -- While the first destination build owns the screen, the overworld update
+    -- is paused below. Swallow presses as well so a menu, hotkey or hidden
+    -- movement command cannot queue behind the loading cover.
+    if Voxel.loading then return end
     local claim = HOTKEYS[key]
     local top = self.stack and self.stack:top()
     -- A screen with its own key handler gets the key first, exactly as the
@@ -602,12 +673,9 @@ local function insertGrouped(out, extra)
   return out
 end
 
--- FULL owns the settings that describe the LOOK, so while it is selected those
--- are taken off the menu rather than left to be changed under it -- including
--- T-SHIFT, which is a pipeline row the engine put there. A row that no longer
--- decides anything is worse than no row.
---
--- The battle rows are the exception and they stay; see the rows hook.
+-- FULL owns the authored scene-style rows below, so they leave the menu while
+-- it is selected. Renderer quality, T-SHIFT and the battle rows remain live:
+-- FULL supplies their starting values but does not hold them every frame.
 local function dropRow(out, id)
   for i = #out, 1, -1 do
     if type(out[i]) == "table" and out[i].id == id then table.remove(out, i) end
@@ -672,11 +740,9 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
   end
   local full = Voxel.isFull(Pipelines.level("voxel"))
   if full then
-    -- FULL owns the rows that PARAMETERISE the diorama -- the wireframe, the
-    -- horizon bend, the blur, the hour -- so those come off the menu and
-    -- DAYTIME is held at SYNC while its row is unreachable.
+    -- DAYTIME is one of the authored look rows FULL owns and hides; hold its
+    -- unreachable value at the preset's SYNC setting.
     DayNight.forceSync(game)
-    dropRow(out, "pipeline:tiltshift")
   end
   local extra = {}
   for _, entry in ipairs(SETTINGS) do
@@ -706,6 +772,7 @@ mod.events:on("mod.options_changed", function(payload)
   for _, entry in ipairs(SETTINGS) do
     if payload.key == entry[1].key then entry[1]:sync(payload.value) end
   end
+  GraphicsSettings.optionChanged(payload.key, require("src.core.Game"))
   -- 3D-BTL switched on from the manager's page pins BATTLE LAYOUT exactly as
   -- the OPTIONS row does. The manager persists its own value; this is the one
   -- that has to follow it.

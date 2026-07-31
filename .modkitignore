@@ -7,6 +7,11 @@
 tests/arena_pick.lua
 tests/battle_shots.lua
 tests/dramatic_shape_test.lua
+tests/build_budget_test.lua
+tests/buildings_budget_test.lua
+tests/graphics_settings_test.lua
+tests/view_cull_test.lua
+tests/voxel_loading_test.lua
 tests/voxel_anim_probe.lua
 tests/voxel_door_probe.lua
 tests/voxel_mem_probe.lua
