@@ -112,6 +112,7 @@ function ModSetting:row()
     value = function() return self_.labels[self_:read()] end,
     step = function(game, dir)
       self_:cycle(game, dir)
+      if self_.onStep then self_.onStep(self_, game, dir) end
       return true
     end,
   }
