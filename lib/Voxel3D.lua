@@ -30,10 +30,12 @@ local Voxel = V.require("VoxelState")
 local ShadowMap = V.require("ShadowMap")
 local VoxelGrid = V.require("VoxelGrid")
 local WorldCurve = V.require("WorldCurve")
+local ViewCull = V.require("ViewCull")
 local Sky = V.require("Sky")
 local DayNight = V.require("DayNight")
 local GlassMask = V.require("GlassMask")
 local PixelCanvas = V.require("PixelCanvas")
+local GraphicsSettings = V.require("GraphicsSettings")
 
 local Voxel3D = {}
 
@@ -133,13 +135,21 @@ local SHADER = [[
 #endif
 #ifdef PIXEL
   uniform Image sunMap;
+  uniform Image sunActorMap;
+  uniform float sunActorOn;
   uniform float sunDark;      // how far into black a shadow goes; 0 = off
   uniform float sunBias;
   uniform vec2 sunTexel;
+  uniform float sunSoft;      // 1 = four taps, 0 = one mobile-friendly tap
 
   // the two-channel pack ShadowMap writes: high byte, then low
   float sunDepth(vec2 uv) {
     vec4 c = Texel(sunMap, uv);
+    return c.r + c.g * (1.0 / 255.0);
+  }
+
+  float sunActorDepth(vec2 uv) {
+    vec4 c = Texel(sunActorMap, uv);
     return c.r + c.g * (1.0 / 255.0);
   }
 
@@ -162,11 +172,21 @@ local SHADER = [[
     float edge = smoothstep(0.0, 0.06, min(e.x, e.y));
     if (edge <= 0.0) return 1.0;
     float z = p.z - sunBias;
+    // Moving characters are stored separately so their tiny layer can update
+    // every frame while the route-sized terrain map remains world-anchored.
+    // One nearest actor tap is enough: sprite silhouettes are pixel cutouts,
+    // while the expensive four-tap softness remains on the terrain edges.
+    float actorLit = mix(1.0, step(z, sunActorDepth(p.xy)), sunActorOn);
+    if (sunSoft < 0.5) {
+      float lit = min(step(z, sunDepth(p.xy)), actorLit);
+      return 1.0 - sunDark * edge * (1.0 - lit);
+    }
     float lit = step(z, sunDepth(p.xy + sunTexel * vec2(-0.5, -0.5)))
               + step(z, sunDepth(p.xy + sunTexel * vec2( 0.5, -0.5)))
               + step(z, sunDepth(p.xy + sunTexel * vec2(-0.5,  0.5)))
               + step(z, sunDepth(p.xy + sunTexel * vec2( 0.5,  0.5)));
-    return 1.0 - sunDark * edge * (1.0 - lit * 0.25);
+    return 1.0 - sunDark * edge
+         * (1.0 - min(lit * 0.25, actorLit));
   }
 
 #ifdef VOXEL_GRID
@@ -906,10 +926,15 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   pcall(sh.send, sh, "sunVP", "row", map and ShadowMap.uvVP or IDENTITY)
   local tex = ShadowMap.texture()
   if tex then pcall(sh.send, sh, "sunMap", tex) end
+  local actorTex = ShadowMap.actorTexture()
+  if actorTex then pcall(sh.send, sh, "sunActorMap", actorTex) end
+  pcall(sh.send, sh, "sunActorOn", ShadowMap.actorsActive() and 1 or 0)
   pcall(sh.send, sh, "sunDark", map and Voxel3D.SHADOW_ALPHA or 0)
   pcall(sh.send, sh, "sunBias", ShadowMap.bias)
   local texel = 1 / ShadowMap.res
   pcall(sh.send, sh, "sunTexel", { texel, texel })
+  pcall(sh.send, sh, "sunSoft",
+        GraphicsSettings.softShadowEnabled() and 1 or 0)
   if grid then
     pcall(sh.send, sh, "gridDark", VoxelGrid.DARK)
     pcall(sh.send, sh, "gridWidth", VoxelGrid.width())
@@ -950,6 +975,16 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   activeShader = sh
   active = true
   return true
+end
+
+-- Whether a world-space chunk can affect the current scene. The matrix is the
+-- one beginScene built from this frame's actual viewport, so zoom, aspect,
+-- display size and placed battle cameras all take the same path as drawing.
+-- Missing state deliberately means visible: fallback is correctness.
+function Voxel3D.visible(bounds, ox, oz, guard)
+  return ViewCull.visible(Voxel3D.vp, bounds, ox, oz,
+                          Voxel3D.curveK, Voxel3D.curveX, Voxel3D.curveZ,
+                          guard)
 end
 
 -- Depth handling for the character pass. Gen 1 draws sprites over the
