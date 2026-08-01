@@ -24,6 +24,13 @@ T.eq(#run.errors, 0,
 -- fixture dataset instead, so point the dispatcher at that one.
 Pipelines.install(Data)
 
+do
+  local loading, mapId =
+    run.loader.exports.DRAMATIC_SHAPE.isLoading()
+  T.eq(loading, false, "the optional loading export starts false")
+  T.eq(mapId, nil, "and has no map before a first build")
+end
+
 -- ------- the records reached the registry
 
 local defs = Data.render_pipelines

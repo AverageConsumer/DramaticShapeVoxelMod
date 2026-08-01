@@ -96,6 +96,24 @@ local VR = V.require("VR")
 local GraphicsSettings = V.require("GraphicsSettings")
 local VoxelLoading = V.require("VoxelLoading")
 local Perf = V.require("Perf")
+local publishedLoading
+
+local function publishLoading()
+  local loading = Voxel.loading == true
+  if publishedLoading == loading then return end
+  publishedLoading = loading
+  mod.events:emit("mod.DRAMATIC_SHAPE.loading_changed", {
+    loading = loading,
+    mapId = Voxel.loadingMap,
+  })
+end
+
+-- Optional public seam for companion mods such as Kanto Gear. Consumers can
+-- poll this export, subscribe to the event above, or do both; neither side
+-- becomes a hard dependency of the other.
+mod.exports.isLoading = function()
+  return Voxel.loading == true, Voxel.loadingMap
+end
 
 -- Forward declaration: the voxel pipeline's update hook (registered below)
 -- calls this, and it is defined further down with the settings it drives.
@@ -215,6 +233,7 @@ mod.content.render_pipelines:register("voxel", {
       -- Turning the mode off can evict the last scene's GPU buffers. Keep the
       -- deferred retirement queue moving even though no voxel build runs.
       ChunkMesher.maintenance(true)
+      publishLoading()
       return
     end
     local Game = require("src.core.Game")
@@ -243,6 +262,7 @@ mod.content.render_pipelines:register("voxel", {
     if Voxel.loading and ow and ow.map and ow.camera then
       pcall(VoxelScene.prefetch, ow)
     end
+    publishLoading()
   end,
 
   drawWorld = function(ctx)
