@@ -1,9 +1,8 @@
 -- User-tunable performance controls for the voxel renderer.
 --
--- Every setting defaults to the renderer's historical quality. An old save
--- therefore keeps the same native-resolution path and quality values:
--- full framebuffer resolution, the adaptive 1024/1536/2048 shadow ladder,
--- four-tap soft shadows and the original mesh-build slices.
+-- Fresh Android installs default to the tested balanced profile: native
+-- resolution, 512px shadows at 30 Hz, soft shadows and smooth mesh builds.
+-- Explicit values from an existing save still win.
 --
 -- T-SHIFT remains its own pipeline row because it is expensive enough to
 -- benchmark independently. QUALITY and BALANCED retain the miniature look;
@@ -18,7 +17,7 @@ local GraphicsSettings = {}
 GraphicsSettings.preset = ModSetting.new(
   "graphicsPreset", "V-PRESET",
   { "original", "quality", "balanced", "fast", "battery", "custom" },
-  { "ORIGINAL", "QUALITY", "BALANCED", "FAST", "BATTERY", "CUSTOM" })
+  { "ORIGINAL", "QUALITY", "BALANCED", "FAST", "BATTERY", "CUSTOM" }, 3)
 
 GraphicsSettings.resolution = ModSetting.new(
   "renderScale", "V-RES",
@@ -28,12 +27,12 @@ GraphicsSettings.resolution = ModSetting.new(
 GraphicsSettings.shadows = ModSetting.new(
   "shadowQuality", "V-SHADOW",
   { "auto", "1024", "768", "512", "off" },
-  { "AUTO", "1024", "768", "512", "OFF" })
+  { "AUTO", "1024", "768", "512", "OFF" }, 4)
 
 GraphicsSettings.shadowRate = ModSetting.new(
   "shadowRate", "V-SRATE",
   { 0, 60, 30, 20, 15 },
-  { "LIVE", "60", "30", "20", "15" })
+  { "LIVE", "60", "30", "20", "15" }, 3)
 
 GraphicsSettings.softShadows = ModSetting.new(
   "softShadows", "V-SOFT",
@@ -42,7 +41,7 @@ GraphicsSettings.softShadows = ModSetting.new(
 GraphicsSettings.build = ModSetting.new(
   "buildBudget", "V-BUILD",
   { "normal", "smooth", "minimal" },
-  { "NORMAL", "SMOOTH", "MIN" })
+  { "NORMAL", "SMOOTH", "MIN" }, 2)
 
 local controls = {
   GraphicsSettings.resolution,

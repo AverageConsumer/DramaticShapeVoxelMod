@@ -20,6 +20,12 @@ from the original project preserved.
 Download `DRAMATIC_SHAPE-1.5.4-android.2.zip` from this repository's release page and
 import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
 first if it is installed; both packages intentionally use the same mod ID.
+Confirm the experimental-mod warning and enable it. A fresh setup starts at
+**VOXEL 35**, **BALANCED**, **T-SHIFT 3** and **V-CURVE 2**; existing saved
+choices remain untouched.
+
+This fork does not offer launcher updates. Install the matching Kanto Gear
+release set manually so an upstream package cannot replace its Android fixes.
 
 ## Performance fork scope
 

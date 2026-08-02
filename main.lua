@@ -169,6 +169,7 @@ end
 mod.content.render_pipelines:register("voxel", {
   label = "VOXEL",
   levels = Voxel.ANGLE_LABELS,
+  default = 3,
   -- 3 is the engine's TILT key, which this mode supersedes -- see the
   -- hotkey block near the bottom of this file for how it is claimed
   hotkey = "3",
@@ -360,6 +361,7 @@ mod.content.render_pipelines:register("voxel", {
 mod.content.render_pipelines:register("tiltshift", {
   label = "T-SHIFT",
   levels = TiltShift.LABELS,
+  default = 3,
   -- 6 is free: no engine branch claims it, so this one alone reaches the
   -- registry by the documented route
   hotkey = "6",
