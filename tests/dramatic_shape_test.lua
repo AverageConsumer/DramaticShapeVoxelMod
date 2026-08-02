@@ -65,6 +65,14 @@ T.eq(defs.voxel.levels[7], "1ST (EXPERIMENTAL)",
   "the top rung is the first-person camera, labelled as the experiment it is")
 T.eq(Pipelines.maxLevel("voxel"), 6, "the engine reads the ladder height")
 T.eq(Pipelines.levelLabel("voxel", 3), "35", "the engine reads the rung labels")
+T.eq(defs.voxel.default, 3, "a fresh install defaults VOXEL to 35")
+T.eq(defs.tiltshift.default, 3, "a fresh install keeps the miniature blur")
+
+Pipelines.applyOptions({})
+T.eq(Pipelines.level("voxel"), 3, "the engine applies the fresh voxel default")
+T.eq(Pipelines.level("tiltshift"), 3,
+  "the engine applies the fresh tilt-shift default")
+Pipelines.reset()
 
 -- ------- gating: inert until switched on, and inert without a GPU
 
@@ -149,21 +157,25 @@ T.check(fullIds["DRAMATIC_SHAPE:graphicsPreset"],
 T.check(fullIds["DRAMATIC_SHAPE:renderScale"], "including internal resolution")
 T.check(fullIds["DRAMATIC_SHAPE:shadowQuality"], "and shadow resolution")
 
--- The new controls are opt-in: an old save with none of their keys takes
--- the exact historical path until the player chooses a preset or a rung.
+-- The Android fork starts on the measured Thor profile while keeping every
+-- control independently adjustable.
 do
   local Graphics =
     run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings")
-  T.eq(Graphics.preset:get(), "original", "graphics preset defaults to ORIGINAL")
-  T.eq(Graphics.renderScale(), 1, "ORIGINAL renders at native resolution")
+  T.eq(Graphics.preset:get(), "balanced", "graphics preset defaults to BALANCED")
+  T.eq(Graphics.renderScale(), 1, "BALANCED renders at native resolution")
   local shadowSizes = Graphics.shadowSizes()
-  T.eq(#shadowSizes, 3, "ORIGINAL keeps the adaptive shadow ladder")
-  T.eq(shadowSizes[1], 1024, "the original ladder still starts at 1024")
-  T.eq(shadowSizes[3], 2048, "and still tops out at 2048")
+  T.eq(#shadowSizes, 1, "BALANCED uses one fixed shadow size")
+  T.eq(shadowSizes[1], 512, "BALANCED uses the tested 512 shadow map")
+  T.eq(Graphics.shadowUpdateInterval(), 1 / 30,
+    "BALANCED updates real shadows at 30 Hz")
   T.eq(Graphics.softShadowEnabled(), true,
-    "ORIGINAL keeps the four-tap soft shadow")
-  T.eq(Graphics.buildBudget().urgent, 0.012,
-    "ORIGINAL keeps the historical urgent mesh slice")
+    "BALANCED keeps the four-tap soft shadow")
+  T.eq(Graphics.buildBudget().urgent, 0.006,
+    "BALANCED uses the smooth mesh-build slice")
+
+  local Curve = run.loader.exports.DRAMATIC_SHAPE.lib.require("WorldCurve")
+  T.eq(Curve.setting:get(), 2, "world curve defaults to the tested level 2")
 
   local qualityGame = {
     save = { options = { modOptions = {} } },
