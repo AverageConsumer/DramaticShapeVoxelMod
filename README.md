@@ -1,9 +1,36 @@
 # Dramatic Shape Voxel Mod
 
+> [!IMPORTANT]
+> This is an **unofficial Android-only Kanto Gear performance fork**, based on
+> Dramatic Shape Voxel Mod 1.5.2. We love the original mod: on PC, use the
+> [official project](https://github.com/DramaticShape/DramaticShapeVoxelMod).
+> This package exists because Android handhelds need additional frame-pacing
+> work. It belongs to the tested
+> [Kanto Gear](https://github.com/AverageConsumer/kanto-gear) release set and is
+> currently verified only on an AYN Thor. Other devices may behave differently.
+
 A mod for the [Pokémon Gen 1 Recompilation
 Project](https://github.com/bryanthaboi/pokemon-gen1-recomp-project).
 
-The overworld as a voxelized 3D diorama. Also supports experimental first-person and VR.
+The overworld as a voxelized 3D diorama, with first-person and staged battles
+from the original project preserved.
+
+## Install on Android
+
+Download `DRAMATIC_SHAPE-1.5.3-android.zip` from this repository's release page and
+import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
+first if it is installed; both packages intentionally use the same mod ID.
+
+## Performance fork scope
+
+This fork keeps the upstream renderer and adds cooperative terrain builds,
+camera-culling for spatial mesh chunks, split static/dynamic shadow updates,
+deferred mesh release and optional graphics presets. These changes primarily
+target stalls and frame pacing rather than promising a higher average FPS.
+
+Known on the tested Thor: fancy water with V-CURVE can fall back to ordinary
+animated water tiles. The installed water implementation matches upstream
+1.5.2, so this fork does not currently carry a separate workaround.
 
 ## Controls
 
@@ -23,32 +50,22 @@ menu.
 | the **AA** options row | OFF / 2X / 4X — smooth the stair-stepped edges of the 3D world by rendering the diorama larger than the window and folding it back down. The ladder is samples per display pixel: 2X is a canvas root-two wider and taller, 4X one exactly twice the size. Every edge in the projected picture softens with the silhouettes — the tileset's own texels are quads in a perspective view and cross the pixel grid at the same arbitrary angles — so the diorama reads smoother rather than sharper. The most expensive row in the mod, so it is OFF by default and **FULL** leaves it alone |
 | the **DAYTIME** options row | SYNC / DAY / NIGHT / DUSK / DAWN / CYCLE — what time it is outdoors, on the diorama *and* on the flat 2D world; held at SYNC (and off the menu) while VOXEL is FULL |
 
-## VR
+## PC and VR
 
-The **VR** options row (OFF / ON, off by default) drives a PCVR headset
-through OpenXR on Windows — SteamVR, Oculus or WMR.
-
-### VR controls
-
-Suggested onto Touch, Index and WMR controllers (rebindable in the
-runtime's own binding UI); pad, keyboard and mouse all keep working
-alongside.
-
-| control | does |
-| --- | --- |
-| left stick | move — grid-walks the diorama, free-walks 1ST |
-| A / B (X / Y on the left hand) | A / B |
-| either trigger | START |
-| left stick click | step the VOXEL angle ladder (same as the "3" key) |
-| right stick up / down | *diorama only* — zoom the model |
-| right stick left / right | *1ST only* — snap-turn 45° |
-| grip squeeze + raise / lower that hand | *diorama only* — drag the table's height |
-| head | *1ST and battles* — look; FreeMove walks where you look |
-| left hand | *1ST and battles* — the Pokédex: menus, dialogs and the 2D battle screen on its screen |
+This fork is not distributed or supported as a PC replacement. The Android
+release ZIP omits the upstream Windows OpenXR runtime. PC and PCVR users should
+use the official Dramatic Shape release, where those platforms are developed
+and documented.
 
 ## Licenses
 
-This mod redistributes one third-party binary:
+All authorship, rights and licensing decisions for the original Voxel Mod stay
+with DramaticShape and the original contributors. This fork claims only its
+additional Android performance changes and grants no new rights over upstream
+code. The upstream repository currently contains no project-wide license file.
+
+The source repository retains one upstream third-party binary for parity with
+the original project; the Android release ZIP does not include it:
 
 - **`assets/vr/openxr_loader.dll`** — the Khronos OpenXR loader
   (version 1.0.10.2, x64, unmodified), © The Khronos Group Inc.,

@@ -1,7 +1,7 @@
 {
   "id": "DRAMATIC_SHAPE",
-  "name": "Dramatic Shape Voxel Mod",
-  "version": "1.5.2-thor.32",
+  "name": "Dramatic Shape Voxel Mod (Android Performance Fork)",
+  "version": "1.5.3",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -15,6 +15,7 @@
     "engine_internals"
   ],
   "affects_link": false,
-  "description": "A full 3D diorama overworld: extruded terrain, depth-buffered occlusion, voxel characters and a tilt-shift miniature pass -- and battles fought on the map itself, shot over the shoulder at the nearest clear ground with a slow parallax drift and a depth-of-field pass. Water reflects the sky, the sun, the moon and -- through a screen-space ray march -- the shoreline standing behind it. Registers two render pipelines and claims hotkeys 3, 5, 6, 7, 8 and 9 -- 3 and 5 displace the engine's TILT and GBC FX keys, both still reachable on the OPTIONS menu. Presentational only: it changes what a battle is drawn over, never where anybody stands.",
-  "github": "DramaticShape/DramaticShapeVoxelMod"
+  "experimental": true,
+  "description": "Unofficial Android-only performance fork of Dramatic Shape 1.5.2 for the Kanto Gear release set. Targets stalls and frame pacing on Android handhelds. Tested on AYN Thor; other devices may vary. PC users should use the original mod.",
+  "github": "AverageConsumer/DramaticShapeVoxelMod"
 }
