@@ -117,9 +117,9 @@ Voxel.ready = true
 
 -- A destination with no cached terrain must not leak the vanilla 2D map while
 -- its first voxel meshes build. VoxelScene latches this state until every job
--- requested for the visible neighbourhood has landed; the pipeline shows the
--- lightweight loading canvas and gives the cooperative mesher its covered
--- budget in the meantime.
+-- requested for the visible neighbourhood has landed; cached map crossings
+-- stay playable while unfinished border fill appears. The pipeline gives the
+-- cooperative mesher its covered budget meanwhile.
 Voxel.loading = false
 Voxel.loadingMap = nil
 Voxel.loadingSince = 0

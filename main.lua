@@ -251,6 +251,9 @@ mod.content.render_pipelines:register("voxel", {
     end
     local Game = require("src.core.Game")
     local ow = Game and Game.overworld
+    if Perf.enabled and ow and ow.map then
+      Perf.setSegment("map:" .. ow.map.id)
+    end
     if ow and ow.map and ow.camera then
       local started = Perf.now()
       pcall(VoxelScene.prefetch, ow)
@@ -267,8 +270,10 @@ mod.content.render_pipelines:register("voxel", {
     -- no 3D scene is being presented, so spending the otherwise-idle frame
     -- here cuts first-entry wall time without turning gameplay frames into
     -- hitches.
+    local pumpStarted = Perf.now()
     ChunkMesher.pump(covered or Voxel.loading,
                      Voxel.loading and 0.050 or nil, moving)
+    Perf.add("ChunkMesher.pump", pumpStarted)
     -- pump() may have landed the last mesh. Re-read the cache now so a small
     -- destination that finishes inside the door fade never flashes the
     -- loading canvas for one otherwise-empty frame.
@@ -314,6 +319,7 @@ mod.content.render_pipelines:register("voxel", {
                                      ctx.vw, ctx.vh, ctx.paletteFor)
     Perf.add("VoxelScene.render", started)
     if not canvas then return nil end   -- fall back to the 2D path
+    local overlayStarted = Perf.now()
     if Voxel3D.beginOverlay() then
       -- the FX closures are ordinary 2D draws sized in DISPLAY pixels, and
       -- they are drawing into the supersampled canvas alongside everything
@@ -330,10 +336,14 @@ mod.content.render_pipelines:register("voxel", {
       HordeHud.drawFlat(rw, rh, ctx.scale * AntiAlias.factor())
       Voxel3D.endOverlay()
     end
+    Perf.add("VoxelPipeline.overlay", overlayStarted)
     -- and back to the window's own size, which is what the engine composites
     -- one canvas pixel to one display pixel.  A pass-through when AA is off.
+    local presentStarted = Perf.now()
     canvas = AntiAlias.resolve(canvas, qw, qh, "world")
-    return GraphicsSettings.present(canvas, sw, sh)
+    local presented = GraphicsSettings.present(canvas, sw, sh)
+    Perf.add("VoxelPipeline.present", presentStarted)
+    return presented
   end,
 
   invalidate = function()
@@ -366,7 +376,10 @@ mod.content.render_pipelines:register("tiltshift", {
   -- frame untouched in every other case.
   worldPresent = function(canvas)
     if Voxel.loading then return canvas end
-    return TiltShift.apply(canvas)
+    local started = Perf.now()
+    local presented = TiltShift.apply(canvas)
+    Perf.add("TiltShift.apply", started)
+    return presented
   end,
 
   invalidate = function()
@@ -1239,6 +1252,27 @@ mod.hooks:wrap("world.tod", function(next, tod, ctx)
   if out ~= tod then return out end
   return DayNight.tod()
 end)
+
+-- Device-only live profiling. Perf stays dark unless ds_perf.flag exists;
+-- when enabled, report one 30-second window without adding a debug UI.
+if Perf.enabled then
+  local Renderer = require("src.render.Renderer")
+  local endFrame = Renderer.endFrame
+  Perf.wrap(V.require("BattleScene"), "render", "BattleScene.render")
+  local report = 0
+  function Renderer:endFrame(...)
+    local started = Perf.now()
+    endFrame(self, ...)
+    Perf.add("Renderer.endFrame", started)
+    Perf.drawStats()
+    Perf.frame()
+    if Perf.frameCount >= 1800 then
+      report = report + 1
+      Perf.printReport("live " .. report)
+      Perf.reset()
+    end
+  end
+end
 
 mod.exports.version = "1.5.4"
 -- exposed so a companion mod can pin its own tiles' shapes or read the

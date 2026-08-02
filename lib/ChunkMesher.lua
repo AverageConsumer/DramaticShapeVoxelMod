@@ -1082,6 +1082,7 @@ end
 
 local jobs = {}       -- FIFO of pending jobs
 local jobIndex = {}   -- "id:slot" -> job
+local preferredJobKey = nil
 
 local function jobKey(id, slot)
   return id .. ":" .. slot
@@ -1217,6 +1218,13 @@ function ChunkMesher.request(map, bodyOnly, masks, urgent)
   return (c and c[slot]) or nil
 end
 
+-- Put one speculative neighbour build ahead of the FIFO without giving it
+-- the larger current-map time slice. Passing nil restores plain FIFO order.
+function ChunkMesher.prefer(map, bodyOnly)
+  preferredJobKey = map and jobKey(map.id, bodyOnly and "body" or "full")
+                    or nil
+end
+
 function ChunkMesher.pending()
   return #jobs
 end
@@ -1243,18 +1251,21 @@ function ChunkMesher.pump(covered, sliceOverride, moving)
   -- A hidden/loading frame can absorb a larger retirement batch. Visible
   -- movement leaves the queue alone; idle gameplay drains one small buffer per
   -- tick, keeping destruction work out of the frames where its hitch is seen.
+  -- It also caps urgent builds to the idle slice while walking: the ordinary
+  -- render still needs its share of the same 16.7 ms frame.
   ChunkMesher.maintenance(covered, moving)
   if #jobs == 0 then return end
-  local pick = jobs[1]
-  for _, j in ipairs(jobs) do
-    if j.urgent then
-      pick = j
-      break
+  local function pickJob()
+    for _, j in ipairs(jobs) do
+      if j.urgent then return j end
     end
+    return jobIndex[preferredJobKey] or jobs[1]
   end
+  local pick = pickJob()
   local limits = GraphicsSettings.buildBudget()
   local slice = tonumber(sliceOverride)
                 or (covered and limits.covered
+                    or (moving and limits.idle)
                     or (pick.urgent and limits.urgent or limits.idle))
   local deadline = clock() + slice
   while pick do
@@ -1277,13 +1288,7 @@ function ChunkMesher.pump(covered, sliceOverride, moving)
       return   -- slice spent mid-build; resume next frame
     end
     if clock() >= deadline or #jobs == 0 then return end
-    pick = jobs[1]
-    for _, j in ipairs(jobs) do
-      if j.urgent then
-        pick = j
-        break
-      end
-    end
+    pick = pickJob()
   end
 end
 
