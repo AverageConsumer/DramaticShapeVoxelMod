@@ -1061,18 +1061,22 @@ end)
 -- needs no battle code at all -- and every path that builds a battler goes
 -- through it, including a Transform mid-fight.
 --
--- next() first, so a sprite-replacing mod loaded before this one still gets
--- the last word on WHICH art is used; this only changes which SIDE is asked
--- for.
+-- Ask every downstream art mod for its FRONT variant. This hook has to run
+-- before them: a complete front pic is what stands on the map, while many
+-- back pics end at the text-box edge baked into their artwork.
 mod.hooks:wrap("pokemon.sprite", function(next, path, ctx)
-  local out = next(path, ctx)
   if not (ctx and ctx.kind == "battle" and ctx.side == "back") then
-    return out
+    return next(path, ctx)
   end
-  if not OverworldBattle.wantsFront() then return out end
+  if not OverworldBattle.wantsFront() then return next(path, ctx) end
   local def = ctx.data and ctx.data.pokemon and ctx.data.pokemon[ctx.species]
-  return (def and def.spriteFront) or out
-end)
+  local front = {}
+  for key, value in pairs(ctx) do front[key] = value end
+  front.side = "front"
+  local out = next((def and def.spriteFront) or path, front)
+  ctx.trueColor = front.trueColor
+  return out
+end, 1000)
 
 -- Every ending path emits this, including a battle skipped before it drew,
 -- so this is where the map's cast comes back.
@@ -1165,7 +1169,7 @@ if Perf.enabled then
   end
 end
 
-mod.exports.version = "1.5.2-thor.31"
+mod.exports.version = "1.5.2-thor.32"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

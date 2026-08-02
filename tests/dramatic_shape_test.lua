@@ -224,6 +224,31 @@ do
 local Battles = run.loader.exports.DRAMATIC_SHAPE.lib.require("OverworldBattle")
 T.eq(Battles.enabled(), true, "3D-BTL is on by default, which is what pins it")
 
+-- Back art may be cropped for the classic text box. The voxel hook changes
+-- the requested side before a higher-priority art mod selects its variant.
+do
+  local innerWantsFront = Battles.wantsFront
+  Battles.wantsFront = function() return true end
+  local seenSide
+  local unhook = run.loader.hooks:wrap("pokemon.sprite",
+    function(_, _, ctx)
+      seenSide = ctx.side
+      ctx.trueColor = true
+      return "crystal/" .. ctx.side
+    end, 930, "sprite-fixture")
+  local ctx = {
+    kind = "battle", side = "back", species = "CHARMANDER",
+    data = { pokemon = { CHARMANDER = { spriteFront = "front.png" } } },
+  }
+  local path = Runtime.call("pokemon.sprite", function(p) return p end,
+                            "back.png", ctx)
+  unhook()
+  Battles.wantsFront = innerWantsFront
+  T.eq(seenSide, "front", "3D battle asks downstream art mods for front art")
+  T.eq(path, "crystal/front", "downstream art mod keeps the final sprite choice")
+  T.eq(ctx.trueColor, true, "downstream true-color metadata reaches the engine")
+end
+
 -- off FULL first: the row on its own has to be enough, and FULL is checked
 -- separately below
 Pipelines.setLevel("voxel", 2)
