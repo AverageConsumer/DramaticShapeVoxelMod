@@ -142,6 +142,10 @@ jobs:
           rm -rf "$staging/.github" "$staging/.gitattributes" \
                  "$staging/.gitignore" "$staging/.luarc.json"
 
+          # Android release only: keep upstream PCVR source in Git, but leave
+          # its Windows and NuGet runtime payload out of this download.
+          rm -rf "$staging/assets/vr" "$staging/oxr" "$staging/oxr.zip"
+
           python3 - "$staging/manifest.json" "$VERSION" <<'PY'
           import json, sys
           path, version = sys.argv[1], sys.argv[2]
@@ -153,7 +157,7 @@ jobs:
               fh.write("\n")
           PY
 
-          zip_path="$out/${MOD_ID}-${VERSION}.zip"
+          zip_path="$out/${MOD_ID}-${VERSION}-android.zip"
           (cd "$staging" && zip -qr "$zip_path" .)
           unzip -l "$zip_path"
 
@@ -184,7 +188,7 @@ jobs:
           range="${prev:+${prev}..}$GITHUB_SHA"
           changes="$(git log --no-merges --pretty='- %s' "$range" | head -50 || true)"
 
-          notes=$'Download the .zip and install it from the game: MODS > Import mod .zip.'
+          notes=$'Android-only Kanto Gear performance build. We love the original Dramatic Shape Voxel Mod and recommend its official release on PC. This fork exists because Android handhelds need additional frame-pacing work; it is currently verified only on an AYN Thor.\n\nDownload the .zip and install it from the game: MODS > Import mod .zip.'
           if [ -n "$changes" ]; then
             notes+=$'\n\n## Changes\n\n'"$changes"
           fi
@@ -192,9 +196,10 @@ jobs:
 
           gh release create "$TAG" \
             --target "$GITHUB_SHA" \
-            --title "$VERSION" \
+            --title "$VERSION - Android performance build" \
+            --prerelease \
             --notes "$notes" \
-            "dist/${MOD_ID}-${VERSION}.zip" \
+            "dist/${MOD_ID}-${VERSION}-android.zip" \
             "dist/sha256sums.txt"
 
           echo "Published release $TAG"

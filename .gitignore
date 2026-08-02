@@ -5,3 +5,7 @@ __pycache__/
 
 # agent worktrees and local scratch
 .claude/
+
+# local release artifacts and device profiling captures
+/dist/
+/perf-captures/
