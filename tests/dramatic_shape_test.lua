@@ -1026,6 +1026,49 @@ local VoxelScene = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelScene")
 local modeColors = VoxelScene._modeColors
 T.check(type(modeColors) == "function", "the scene exposes its palette resolve")
 
+-- The engine supplies two connection hops for the flat survey zoom. Voxel
+-- mode keeps only maps that share an actual edge with the current map, so a
+-- large second-hop map is neither built nor allowed to pop at a seam.
+do
+local neighborsOf = VoxelScene._neighborsOf
+local route22 = { id = "ROUTE_22", def = { width = 10, height = 9 } }
+local route23 = { id = "ROUTE_23", def = { width = 10, height = 72 } }
+local neighborState = {
+  map = {
+    id = "VIRIDIAN_CITY",
+    def = { width = 20, height = 18,
+            connections = { west = { map = "ROUTE_22" } } },
+  },
+  neighbors = {
+    { map = route22, ox = -640, oy = 128 },
+    { map = route23, ox = -640, oy = -2176 },
+  },
+}
+local near = neighborsOf(neighborState)
+T.eq(#near, 1, "voxel neighbours stop after the directly connected map")
+T.eq(near[1].map.id, "ROUTE_22", "the shared-edge map remains intact")
+neighborState.player = { facing = "left" }
+T.eq(VoxelScene._preferredMapId(neighborState), "ROUTE_22",
+  "the exit in the player's travel direction gets prefetch priority")
+neighborState.player.facing = "up"
+T.eq(VoxelScene._preferredMapId(neighborState), nil,
+  "facing a closed edge does not invent a preferred map")
+local masks = VoxelScene._masksFor(neighborState, route22, -640, 128)
+T.eq(#masks, 2, "a neighbour full mesh masks every loaded surrounding body")
+T.check(masks[1][1] == 640 and masks[1][2] == -128
+        and masks[2][1] == 0 and masks[2][2] == -2304,
+  "neighbour masks are translated from the neighbour's own origin")
+
+-- A root change invalidates the tiny identity cache even if an engine test
+-- double happens to reuse the neighbours table.
+neighborState.map = {
+  id = "ROUTE_2",
+  def = { connections = { north = { map = "PEWTER_CITY" } } },
+}
+T.eq(#neighborsOf(neighborState), 0,
+  "a new root cannot inherit the previous map's direct connections")
+end
+
 -- a recognisable stand-in for a map's SGB zone palette: strongly blue, so
 -- "came through as SGB" is visible in the values themselves
 local sgbBlue = { { 248, 248, 248 }, { 96, 152, 232 },
@@ -2591,6 +2634,9 @@ T.eq(rects.box[2], 96, "starting on the row the player's mon stands on")
 -- the menu the player picks FIGHT on is that same box, so nothing is added
 T.eq(Battles.textRects({ phase = "menu" }).moves, nil,
   "the battle menu draws inside the box already there")
+T.eq(next(Battles.textRects({
+  phase = "menu", bottomUIVisible = function() return false end,
+})), nil, "a hidden battle UI gets no orphaned glass panel")
 
 -- the two phases that put a SECOND box above it get a second panel, trimmed
 -- to the rows above the first: two panels over the same pixels would frost it

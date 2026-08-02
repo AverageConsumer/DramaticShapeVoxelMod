@@ -251,6 +251,7 @@ OverworldBattle.TEXT_RECT = {
 
 function OverworldBattle.textRects(battle)
   if not battle or battle.blankForAskName then return {} end
+  if battle.bottomUIVisible and not battle:bottomUIVisible() then return {} end
   local r = OverworldBattle.TEXT_RECT
   local out = { box = r.box }
   if battle.phase == "moveSelect" then

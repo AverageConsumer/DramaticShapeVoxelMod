@@ -27,6 +27,7 @@ local DayNight = V.require("DayNight")
 local FirstPerson = V.require("FirstPerson")
 local BattleBillboard = V.require("BattleBillboard")
 local Pokedex = V.require("Pokedex")
+local Perf = V.require("Perf")
 local PaletteFX = require("src.render.PaletteFX")
 local Map = require("src.world.Map")
 
@@ -410,6 +411,73 @@ end
 -- actually changes (a map crossing), not every frame.
 local lastLiveKey = nil
 
+-- The flat renderer keeps two connection hops for its survey zoom. In 3D that
+-- can expose and build a large map beyond an intervening route (Viridian can
+-- see Route 23 through Route 22), only for it to vanish at the next seam.
+-- Direct connections cover every real map edge without that distant work.
+local neighborSource, neighborRoot, directNeighbors, directMapIds, neighborMasks
+local function neighborsOf(state)
+  if neighborSource == state.neighbors and neighborRoot == state.map.id then
+    return directNeighbors
+  end
+  local connected = {}
+  for _, conn in pairs(state.map.def.connections or {}) do
+    connected[conn.map] = true
+  end
+  directNeighbors = {}
+  directMapIds = { [state.map.id] = true }
+  neighborMasks = {}
+  for _, nb in ipairs(state.neighbors or {}) do
+    if connected[nb.map.id] then
+      directNeighbors[#directNeighbors + 1] = nb
+      directMapIds[nb.map.id] = true
+    end
+  end
+  neighborSource, neighborRoot = state.neighbors, state.map.id
+  return directNeighbors
+end
+
+local function mapIdsOf(state)
+  neighborsOf(state)
+  return directMapIds
+end
+
+local facingConnection = {
+  up = "north", down = "south", left = "west", right = "east",
+}
+
+local function preferredMapId(state)
+  local edge = state.player and facingConnection[state.player.facing]
+  local conn = edge and (state.map.def.connections or {})[edge]
+  return conn and conn.map or nil
+end
+
+-- Full meshes bake their border fill, so a neighbour promoted to the current
+-- map must use masks expressed from its own origin. The engine's two-hop list
+-- already contains every body needed to carve those rings correctly.
+local function masksFor(state, map, ox, oy)
+  neighborsOf(state)
+  local masks = neighborMasks[map.id]
+  if masks then return masks end
+  masks = {}
+  local function add(other, x, y)
+    if other.id == map.id then return end
+    masks[#masks + 1] = { x - ox, y - oy,
+                          x - ox + other.def.width * 32,
+                          y - oy + other.def.height * 32 }
+  end
+  add(state.map, 0, 0)
+  for _, nb in ipairs(state.neighbors or {}) do
+    add(nb.map, nb.ox, nb.oy)
+  end
+  neighborMasks[map.id] = masks
+  return masks
+end
+
+VoxelScene._neighborsOf = neighborsOf
+VoxelScene._masksFor = masksFor
+VoxelScene._preferredMapId = preferredMapId
+
 -- Request everything `state`'s frame wants and evict what it no longer
 -- does; returns the current map's terrain mesh (or nil while it builds)
 -- and the neighbour meshes ready to draw. render() calls this for the
@@ -430,7 +498,7 @@ function VoxelScene.prefetch(state)
   -- ever visited.
   local liveKey = state.map.id
   local live = { [state.map.id] = true }
-  for _, nb in ipairs(state.neighbors or {}) do
+  for _, nb in ipairs(neighborsOf(state)) do
     live[nb.map.id] = true
     liveKey = liveKey .. "|" .. nb.map.id
   end
@@ -444,23 +512,13 @@ function VoxelScene.prefetch(state)
 
   -- masks: where connected neighbour BODIES sit, so the border ring is
   -- suppressed under them (see runGeometry)
-  local masks = {}
-  for _, nb in ipairs(state.neighbors or {}) do
-    masks[#masks + 1] = { nb.ox, nb.oy,
-                          nb.ox + nb.map.def.width * 32,
-                          nb.oy + nb.map.def.height * 32 }
-  end
+  local masks = masksFor(state, state.map, 0, 0)
 
   -- Builds are asynchronous (ChunkMesher.pump runs in the pipeline's
   -- update): request what this frame wants and draw what is ready.
-  -- The current map draws its body-only mesh while the full one (the
-  -- border ring) is still building -- a seam crossing promotes a
-  -- neighbour whose body is already cached, and the ring pops in a few
-  -- frames later, mostly hidden behind the map just left. A neighbour
-  -- missing its body-only mesh draws its cached FULL mesh instead -- a
-  -- crossing demotes the map just left, and it must not vanish from
-  -- behind the player while its body variant builds; its ring is
-  -- already masked out under this map's body, so the stand-in is safe.
+  -- A neighbour starts with its body mesh, then prebuilds and prefers the
+  -- masked FULL variant. If a fast crossing beats that build, the body stays
+  -- playable as the seamless fallback until its ring lands.
   -- The water surface rides along with whichever variant answers: it was
   -- cut out of that build's own geometry (ChunkMesher.pair), so the two
   -- always come from the same slot and a lake is never drawn twice or left
@@ -471,22 +529,32 @@ function VoxelScene.prefetch(state)
     terrain, water = ChunkMesher.pair(state.map, true)
   end
   local nbMesh, nbWater = {}, {}
-  for i, nb in ipairs(state.neighbors or {}) do
+  local preferred = preferredMapId(state)
+  local preferredMap, preferredBodyOnly
+  for i, nb in ipairs(neighborsOf(state)) do
     ChunkMesher.request(nb.map, true)
-    nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, true)
+    local body, bodyWater = ChunkMesher.pair(nb.map, true)
+    if body then
+      ChunkMesher.request(nb.map, false,
+                          masksFor(state, nb.map, nb.ox, nb.oy))
+    end
+    nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, false)
     if not nbMesh[i] then
-      nbMesh[i], nbWater[i] = ChunkMesher.pair(nb.map, false)
+      nbMesh[i], nbWater[i] = body, bodyWater
+    end
+    if nb.map.id == preferred and not ChunkMesher.peek(nb.map, false) then
+      preferredMap, preferredBodyOnly = nb.map, not body
     end
   end
+  ChunkMesher.prefer(preferredMap, preferredBodyOnly)
   local pending = ChunkMesher.pending()
   if not terrain and pending > 0 then
+    -- Only cover a genuinely cold map. Cached body meshes remain playable
+    -- while their border fill finishes, even if that makes the ring pop in.
     Voxel.beginLoading(state.map.id)
   elseif Voxel.loading and Voxel.loadingMap == state.map.id and pending == 0 then
-    -- A tilted camera sees well across map seams, so "current map ready" is
-    -- not a sufficient visual condition: Route 1 is already on the Pallet
-    -- horizon. Wait for every current-neighbourhood job requested above.
-    -- A failed current build also reaches pending=0 and releases the cover,
-    -- preserving the vanilla fallback instead of an infinite loading screen.
+    -- A failed build reaches pending=0 and releases the cover too, preserving
+    -- the vanilla fallback instead of an infinite loading screen.
     Voxel.finishLoading(state.map.id)
   end
   Voxel.ready = terrain ~= nil and not Voxel.loading
@@ -510,14 +578,18 @@ local function posesOf(state, spriteColors)
   local colors = spriteColors(state.map)
   local posed = {}
   local me = nil
+  local mapIds = mapIdsOf(state)
   for _, g in ipairs(state.ghosts or {}) do
-    local sprite, vx, vy, facing, phase, flip = g.npc:pose()
-    posed[#posed + 1] = {
-      sprite = sprite, px = vx + g.ox, py = g.npc.py + g.oy,
-      facing = facing, phase = phase, flip = flip,
-      gh = groundAt(g.map or state.map, g.npc.cellX, g.npc.cellY),
-      lift = g.npc.py - vy, colors = spriteColors(g.map or state.map),
-    }
+    local map = g.map or state.map
+    if mapIds[map.id] then
+      local sprite, vx, vy, facing, phase, flip = g.npc:pose()
+      posed[#posed + 1] = {
+        sprite = sprite, px = vx + g.ox, py = g.npc.py + g.oy,
+        facing = facing, phase = phase, flip = flip,
+        gh = groundAt(map, g.npc.cellX, g.npc.cellY),
+        lift = g.npc.py - vy, colors = spriteColors(map),
+      }
+    end
   end
   for _, e in ipairs(state.entities or {}) do
     if not (state.flyAnim and e == state.player) then
@@ -624,7 +696,7 @@ local function drawCast(state, posed, atlasFor)
     Voxel3D.draw(mesh, atlasFor(state.map), model, figPull,
                  ShadowMap.snug(caster))
   end)
-  for _, nb in ipairs(state.neighbors or {}) do
+  for _, nb in ipairs(neighborsOf(state)) do
     eachFigure(nb.map, nb.ox, nb.oy, function(mesh, model, caster)
       Voxel3D.draw(mesh, atlasFor(nb.map), model, figPull,
                    ShadowMap.snug(caster))
@@ -883,20 +955,20 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
     end
 
     drawTerrain(state.map, terrain, 0, 0)
-    for i, nb in ipairs(state.neighbors or {}) do
+    for i, nb in ipairs(neighborsOf(state)) do
       drawTerrain(nb.map, nbMesh[i], nb.ox, nb.oy)
     end
     -- Water is a separate reflective mesh in the main pass, but still part
     -- of the static world the sun sees. It is opaque to the depth-only pass.
     ShadowMap.draw(water, nil, nil, true)
-    for i, nb in ipairs(state.neighbors or {}) do
+    for i, nb in ipairs(neighborsOf(state)) do
       ShadowMap.draw(nbWater and nbWater[i], nil,
                      Mat4.translate(nb.ox, 0, nb.oy), true)
     end
     -- Flowers and authored figures do not move in world space, so they live
     -- with terrain. Their alpha cutout remains in this otherwise opaque pass.
     drawFlowers(state.map, 0, 0)
-    for _, nb in ipairs(state.neighbors or {}) do
+    for _, nb in ipairs(neighborsOf(state)) do
       drawFlowers(nb.map, nb.ox, nb.oy)
     end
     -- Figures are static enough to cache with terrain, but remain people:
@@ -905,7 +977,7 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
     eachFigure(state.map, 0, 0, function(mesh, _, caster)
       ShadowMap.draw(mesh, atlasFor(state.map), ShadowMap.snug(caster))
     end)
-    for _, nb in ipairs(state.neighbors or {}) do
+    for _, nb in ipairs(neighborsOf(state)) do
       eachFigure(nb.map, nb.ox, nb.oy, function(mesh, _, caster)
         ShadowMap.draw(mesh, atlasFor(nb.map), ShadowMap.snug(caster))
       end)
@@ -954,6 +1026,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   local terrain, nbMesh, water, nbWater = VoxelScene.prefetch(state)
   if not terrain then return nil end
 
+  local phaseStarted = Perf.now()
   local cam = state.camera
   local cx, cy = cam.x + vw / 2, cam.y + vh / 2
 
@@ -988,7 +1061,6 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   end
 
   local posed, me = posesOf(state, spriteColors)
-
   -- The first-person rig, built (or blended) for this frame and handed to
   -- Voxel3D BEFORE either pass runs: the sun's box is fitted around this
   -- camera, and every card matrix asks it which way to turn. With the
@@ -1026,8 +1098,12 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- reaches far north and barely south, which is right for every rung
   -- but a head free to face south.
   local shCx, shCy = FirstPerson.shadowCenter(cx, cy, vh)
+  Perf.add("VoxelScene.setup", phaseStarted)
+
+  phaseStarted = Perf.now()
   castShadows(state, terrain, nbMesh, posed, shCx, shCy, vw, vh, atlasFor,
               water, nbWater, battleCards, battleToken)
+  Perf.add("VoxelScene.shadows", phaseStarted)
 
   -- Everything between beginScene and endScene, as one function: the flat
   -- path runs it once, a VR frame runs it once PER EYE -- same posed
@@ -1035,14 +1111,16 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- about anything but their viewpoint.
   local function drawScene()
 
+  phaseStarted = Perf.now()
   VoxelScene.drawSpatial(
     terrain, ChunkMesher.chunksForMesh(state.map, terrain),
     atlasFor(state.map), 0, 0)
-  for i, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(neighborsOf(state)) do
     VoxelScene.drawSpatial(
       nbMesh[i], ChunkMesher.chunksForMesh(nb.map, nbMesh[i]),
       atlasFor(nb.map), nb.ox, nb.oy)
   end
+  Perf.add("VoxelScene.terrain", phaseStarted)
 
   -- Without a shadow map (headless, or a driver that could not make the
   -- canvas) the old flat decals stand in: ground-only, characters only,
@@ -1068,11 +1146,12 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- lake would otherwise wear one as a black smear. Water covers them,
   -- which is the same answer the shadow map's own pass gives (see
   -- ShadowMap.sprites) -- people do not shadow water either way.
+  phaseStarted = Perf.now()
   local waterDraws = {}
   if water then
     waterDraws[#waterDraws + 1] = { water, atlasFor(state.map), nil }
   end
-  for i, nb in ipairs(state.neighbors or {}) do
+  for i, nb in ipairs(neighborsOf(state)) do
     if nbWater and nbWater[i] then
       waterDraws[#waterDraws + 1] = { nbWater[i], atlasFor(nb.map),
                                       Mat4.translate(nb.ox, 0, nb.oy) }
@@ -1086,8 +1165,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
       drawCast(state, posed, atlasFor)
     end)
   end
+  Perf.add("VoxelScene.water", phaseStarted)
 
 
+  phaseStarted = Perf.now()
   -- Sprite sheets from here to the figure pass: their texture coordinates
   -- mean nothing to the tileset-shaped glass mask, so the glass is off or
   -- the panes' atlas positions stripe the cast with lamplight at night
@@ -1175,7 +1256,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   VoxelScene.drawSpatial(
     ChunkMesher.grass(state.map), ChunkMesher.grassChunks(state.map),
     atlasFor(state.map), 0, 0, pull)
-  for _, nb in ipairs(state.neighbors or {}) do
+  for _, nb in ipairs(neighborsOf(state)) do
     VoxelScene.drawSpatial(
       ChunkMesher.grass(nb.map), ChunkMesher.grassChunks(nb.map),
       atlasFor(nb.map), nb.ox, nb.oy, pull)
@@ -1196,12 +1277,13 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   VoxelScene.drawSpatial(
     ChunkMesher.flowers(state.map), ChunkMesher.flowerChunks(state.map),
     atlasFor(state.map), 0, 0, fpull, ShadowMap.snug(nil))
-  for _, nb in ipairs(state.neighbors or {}) do
+  for _, nb in ipairs(neighborsOf(state)) do
     local model = Mat4.translate(nb.ox, 0, nb.oy)
     VoxelScene.drawSpatial(
       ChunkMesher.flowers(nb.map), ChunkMesher.flowerChunks(nb.map),
       atlasFor(nb.map), nb.ox, nb.oy, fpull, ShadowMap.snug(model))
   end
+  Perf.add("VoxelScene.cast+foliage", phaseStarted)
 
   -- The VR pokedex in the player's left hand, last of all: a prop over
   -- the world drawn with real depth, so leaning it into a wall still
@@ -1220,11 +1302,18 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   end   -- drawScene
 
   if not eyes then
-    if not Voxel3D.beginScene(w, h, cx, cy, vw, vh, skyFor(state.map)) then
+    phaseStarted = Perf.now()
+    local began = Voxel3D.beginScene(w, h, cx, cy, vw, vh,
+                                     skyFor(state.map))
+    Perf.add("VoxelScene.begin", phaseStarted)
+    if not began then
       return nil
     end
     drawScene()
-    return Voxel3D.endScene()
+    phaseStarted = Perf.now()
+    local canvas = Voxel3D.endScene()
+    Perf.add("VoxelScene.finish", phaseStarted)
+    return canvas
   end
 
   -- The VR frame: the same scene once per eye, each into its own named
@@ -1237,12 +1326,17 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   for i, eye in ipairs(eyes) do
     Voxel3D.camera = eye.camera
     if eye.adopt then FirstPerson.adoptVReye(eye.camera) end
-    if not Voxel3D.beginScene(eye.w, eye.h, cx, cy, vw, vh,
-                              skyFor(state.map), eye.slot) then
+    phaseStarted = Perf.now()
+    local began = Voxel3D.beginScene(eye.w, eye.h, cx, cy, vw, vh,
+                                     skyFor(state.map), eye.slot)
+    Perf.add("VoxelScene.begin", phaseStarted)
+    if not began then
       return nil
     end
     drawScene()
+    phaseStarted = Perf.now()
     out[i] = Voxel3D.endScene()
+    Perf.add("VoxelScene.finish", phaseStarted)
   end
   return out
 end
