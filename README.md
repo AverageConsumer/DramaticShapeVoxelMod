@@ -17,7 +17,7 @@ from the original project preserved.
 
 ## Install on Android
 
-Download `DRAMATIC_SHAPE-1.5.3-android.zip` from this repository's release page and
+Download `DRAMATIC_SHAPE-1.5.2-android.1.zip` from this repository's release page and
 import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
 first if it is installed; both packages intentionally use the same mod ID.
 Confirm the experimental-mod warning and enable it. A fresh setup starts at
@@ -65,10 +65,10 @@ and documented.
 
 ## Licenses
 
-All authorship, rights and licensing decisions for the original Voxel Mod stay
-with DramaticShape and the original contributors. This fork claims only its
-additional Android performance changes and grants no new rights over upstream
-code. The upstream repository currently contains no project-wide license file.
+All authorship stays with DramaticShape and the original contributors. The
+upstream project added an MIT license in 1.5.4; this fork carries that license
+without claiming upstream endorsement. Our Android changes use the same terms.
+See [`LICENSE`](LICENSE).
 
 The source repository retains one upstream third-party binary for parity with
 the original project; the Android release ZIP does not include it:

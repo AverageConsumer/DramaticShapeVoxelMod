@@ -3,19 +3,13 @@ name: Release
 # Packs the mod into an installable .zip and publishes it as a GitHub Release,
 # once per push to main.
 #
-# Archive layout: every mod file at the archive root, manifest.json included.
+# Archive layout: runtime files at the root, manifest.json included.
 # That is one of the two shapes the game accepts on MODS > Import mod .zip
 # (src/mods/LauncherMods.lua locateRoot: manifest at the root, or inside a
-# single top-level folder). Nothing else is added, so the archive stays
-# installable by hand too.
+# single top-level folder). Tests, source notes and PCVR payloads stay out.
 #
-# Versioning, first rule that applies wins:
-#   1. the "version" input of a manual run,
-#   2. "[release X.Y.Z]" anywhere in the commit message,
-#   3. manifest.json's own version, when it is ahead of every existing tag,
-#      so bumping the manifest is the normal way to cut a release,
-#   4. otherwise the newest vX.Y.Z tag with its patch incremented
-#      (0.2.99 rolls over to 0.3.0).
+# Versioning: the manual input wins; otherwise manifest.json is used.
+# Stable X.Y.Z and fork prereleases such as X.Y.Z-android.1 are accepted.
 # Whichever wins is written into the manifest.json inside the archive, so a
 # shipped mod never reports a different version than the release it came from.
 #
@@ -31,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Exact version to release (e.g. 0.3.0). Leave blank to auto-resolve."
+        description: "Exact version (e.g. 1.5.2-android.1). Defaults to manifest.json."
         required: false
         default: ""
 
@@ -59,16 +53,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, re, subprocess, sys
+          import json, os, re, sys
 
-          SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-
-          def sh(*args):
-              return subprocess.run(args, capture_output=True, text=True).stdout.strip()
-
-          def parse(text):
-              m = SEMVER.match(text)
-              return tuple(int(p) for p in m.groups()) if m else None
+          SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$")
 
           def die(msg):
               print(f"::error::{msg}", file=sys.stderr)
@@ -77,38 +64,13 @@ jobs:
           with open("manifest.json", encoding="utf-8") as fh:
               manifest_version = str(json.load(fh).get("version", ""))
 
-          released = sorted(
-              v for v in (parse(tag[1:]) for tag in sh("git", "tag", "-l", "v*").splitlines()) if v
-          )
-          latest = released[-1] if released else None
-
           override = os.environ.get("DISPATCH_VERSION", "").strip()
-          if not override:
-              found = re.search(r"\[release\s+(\d+\.\d+\.\d+)\]", sh("git", "log", "-1", "--pretty=%B"))
-              override = found.group(1) if found else ""
-
-          manifest_ver = parse(manifest_version)
-          if override:
-              version = parse(override) or die(f"invalid version override {override!r} (expected X.Y.Z)")
-              source = "the override"
-          elif manifest_ver and (latest is None or manifest_ver > latest):
-              version = manifest_ver
-              source = "manifest.json"
-          elif latest:
-              major, minor, patch = latest
-              patch += 1
-              if patch > 99:
-                  minor, patch = minor + 1, 0
-              version = (major, minor, patch)
-              source = "a patch bump on v%d.%d.%d" % latest
-          else:
-              die(f"manifest.json version {manifest_version!r} is not X.Y.Z "
-                  "and there is no vX.Y.Z tag to count from")
-
-          text = "%d.%d.%d" % version
-          print(f"Releasing {text}, from {source}.", file=sys.stderr)
-          print(f"version={text}")
-          print(f"tag=v{text}")
+          version = override or manifest_version
+          if not SEMVER.fullmatch(version):
+              die(f"invalid version {version!r} (expected X.Y.Z or X.Y.Z-name.N)")
+          print(f"Releasing {version}.", file=sys.stderr)
+          print(f"version={version}")
+          print(f"tag=v{version}")
           PY
 
       - name: Refuse to clobber an existing release
@@ -137,14 +99,8 @@ jobs:
           rm -rf "$staging" "$out"
           mkdir -p "$staging" "$out"
 
-          git archive HEAD | tar -x -C "$staging"
-
-          rm -rf "$staging/.github" "$staging/.gitattributes" \
-                 "$staging/.gitignore" "$staging/.luarc.json"
-
-          # Android release only: keep upstream PCVR source in Git, but leave
-          # its Windows and NuGet runtime payload out of this download.
-          rm -rf "$staging/assets/vr" "$staging/oxr" "$staging/oxr.zip"
+          git archive HEAD LICENSE manifest.json main.lua mod.card data lib \
+            | tar -x -C "$staging"
 
           python3 - "$staging/manifest.json" "$VERSION" <<'PY'
           import json, sys
@@ -157,7 +113,7 @@ jobs:
               fh.write("\n")
           PY
 
-          zip_path="$out/${MOD_ID}-${VERSION}-android.zip"
+          zip_path="$out/${MOD_ID}-${VERSION}.zip"
           (cd "$staging" && zip -qr "$zip_path" .)
           unzip -l "$zip_path"
 

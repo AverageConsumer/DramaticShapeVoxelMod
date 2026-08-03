@@ -533,7 +533,7 @@
   pins stay only as the degradation path when the shape profile is
   absent.
 
-## Unreleased Android performance update
+## 1.5.2-android.1
 
 - Adds opt-in renderer presets and independent controls without changing the
   original defaults.
