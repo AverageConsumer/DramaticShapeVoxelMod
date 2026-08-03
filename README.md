@@ -7,7 +7,8 @@
 > This package exists because Android handhelds need additional frame-pacing
 > work. It belongs to the tested
 > [Kanto Gear](https://github.com/AverageConsumer/kanto-gear) release set and is
-> currently verified only on an AYN Thor. Other devices may behave differently.
+> verified on an AYN Thor. Comparable Android handhelds are intended targets,
+> but their performance and driver behavior still need community testing.
 
 A mod for the [Pokémon Gen 1 Recompilation
 Project](https://github.com/bryanthaboi/pokemon-gen1-recomp-project).
