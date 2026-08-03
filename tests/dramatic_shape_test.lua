@@ -15,7 +15,15 @@ local Data = T.fixtures.load()
 -- that is enough to make the headless loader's directory probe fail, so a
 -- run alongside a live session points at a copy instead.
 local MOD_PATH = os.getenv("DS_MOD_PATH") or "mods/DramaticShapeVoxelMod"
+_G.DS_TEST_LOAD_OPTIONS = require("src.core.SaveData").loadOptions
+require("src.core.SaveData").loadOptions = function(fs)
+  local options = _G.DS_TEST_LOAD_OPTIONS(fs)
+  options.mods.DRAMATIC_SHAPE = true
+  return options
+end
 local run = T.sdk.loadMod(MOD_PATH, { data = Data })
+require("src.core.SaveData").loadOptions = _G.DS_TEST_LOAD_OPTIONS
+_G.DS_TEST_LOAD_OPTIONS = nil
 
 T.eq(#run.errors, 0,
   "DRAMATIC_SHAPE loads clean: " .. table.concat(run.errors, "; "))
@@ -175,7 +183,7 @@ do
     "BALANCED uses the smooth mesh-build slice")
 
   local Curve = run.loader.exports.DRAMATIC_SHAPE.lib.require("WorldCurve")
-  T.eq(Curve.setting:get(), 2, "world curve defaults to the tested level 2")
+  T.eq(Curve.setting:get(), 0, "world curve is opt-in on a fresh install")
 
   local qualityGame = {
     save = { options = { modOptions = {} } },
@@ -4295,6 +4303,11 @@ end)()
   local Horde = lib.require("Horde")
   local Mobs = lib.require("HordeMobs")
   local Gun = lib.require("HordeGun")
+
+  -- The Android fork does not install the hidden entry point in production.
+  -- Install it only inside this upstream compatibility test so the retained
+  -- Horde sources remain testable without exposing the mode to players.
+  Horde.install()
 
   -- ------- the code
 
