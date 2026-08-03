@@ -155,7 +155,7 @@ jobs:
             --title "$VERSION - Android performance build" \
             --prerelease \
             --notes "$notes" \
-            "dist/${MOD_ID}-${VERSION}-android.zip" \
+            "dist/${MOD_ID}-${VERSION}.zip" \
             "dist/sha256sums.txt"
 
           echo "Published release $TAG"
