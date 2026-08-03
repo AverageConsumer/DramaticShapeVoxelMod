@@ -64,8 +64,10 @@ and documented.
 
 ## Licenses
 
-This fork retains the upstream **MIT License** — see [`LICENSE`](LICENSE).
-Original authorship stays with DramaticShape and the original contributors.
+All authorship stays with DramaticShape and the original contributors. The
+upstream project added an MIT license in 1.5.4; this fork carries that license
+without claiming upstream endorsement. Our Android changes use the same terms.
+See [`LICENSE`](LICENSE).
 
 The source repository retains one upstream third-party binary for parity with
 the original project; the Android release ZIP does not include it:
