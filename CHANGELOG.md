@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.4-android.2
+
+- Rebased the Android performance fork on upstream 1.5.4.
+- Kept cooperative terrain builds, camera culling, split shadow updates and
+  the Android graphics presets.
+- Disabled the unrelated Horde minigame entry point and made V-CURVE default
+  to OFF. Existing saved choices remain untouched.
+
 ## 1.5.4
 
 ### Added

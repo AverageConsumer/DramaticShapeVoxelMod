@@ -60,7 +60,7 @@ WorldCurve.AMOUNTS = { 0, 0.05, 0.10, 0.18 }
 
 WorldCurve.setting = ModSetting.new(WorldCurve.KEY, WorldCurve.LABEL,
                                     { 0, 1, 2, 3 },
-                                    { "OFF", "1", "2", "3" }, 3)
+                                    { "OFF", "1", "2", "3" })
 
 function WorldCurve.level()
   return WorldCurve.setting:get() or 0

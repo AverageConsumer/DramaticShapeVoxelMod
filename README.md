@@ -22,7 +22,7 @@ Download `DRAMATIC_SHAPE-1.5.4-android.2.zip` from this repository's release pag
 import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
 first if it is installed; both packages intentionally use the same mod ID.
 Confirm the experimental-mod warning and enable it. A fresh setup starts at
-**VOXEL 35**, **BALANCED**, **T-SHIFT 3** and **V-CURVE 2**; existing saved
+**VOXEL 35**, **BALANCED**, **T-SHIFT 3** and **V-CURVE OFF**; existing saved
 choices remain untouched.
 
 This fork does not offer launcher updates. Install the matching Kanto Gear
@@ -34,6 +34,7 @@ This fork keeps the upstream renderer and adds cooperative terrain builds,
 camera-culling for spatial mesh chunks, split static/dynamic shadow updates,
 deferred mesh release and optional graphics presets. These changes primarily
 target stalls and frame pacing rather than promising a higher average FPS.
+The unrelated upstream Horde minigame is not activated in this Android build.
 
 Known on the tested Thor: fancy water with V-CURVE can fall back to ordinary
 animated water tiles. This fork does not carry a separate workaround.

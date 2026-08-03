@@ -1120,14 +1120,8 @@ do
   end
 end
 
--- ------- the konami code, and everything it turns on
---
--- Installed last of the input seams so its handleInput reasoning sits
--- outside FreeMove's and SELECT's. The detector itself does not live on
--- handleInput at all -- it reads the fixed step's own press queue, which
--- is where keyboard, pad, touch and the VR controllers have all already
--- become the same eight buttons. See lib/Horde.lua.
-Horde.install()
+-- The Android performance fork keeps upstream's files mergeable but does not
+-- install its unrelated Horde minigame.
 
 -- ------- edge-anchored menus stay in the GB frame while a headset is live
 --
@@ -1280,7 +1274,7 @@ if Perf.enabled then
   end
 end
 
-mod.exports.version = "1.5.4"
+mod.exports.version = "1.5.4-android.2"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V
