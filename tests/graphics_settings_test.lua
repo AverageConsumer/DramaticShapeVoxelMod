@@ -55,12 +55,12 @@ love = {
 
 local G = V.require("GraphicsSettings")
 
-assert(G.preset:get() == "original")
+assert(G.preset:get() == "balanced")
 assert(G.renderScale() == 1)
 assert(G.softShadowEnabled())
-assert(G.buildBudget().urgent == 0.012)
-assert(#G.shadowSizes() == 3 and G.shadowSizes()[3] == 2048)
-assert(G.shadowUpdateInterval() == 0)
+assert(G.buildBudget().urgent == 0.006)
+assert(#G.shadowSizes() == 1 and G.shadowSizes()[1] == 512)
+assert(math.abs(G.shadowUpdateInterval() - 1 / 30) < 0.0001)
 
 local native = canvas(1920, 1080)
 assert(G.present(native, 1920, 1080) == native)
@@ -71,6 +71,9 @@ local game = {
   mods = { modOptions = {} },
   writeOptions = function() writes = writes + 1 end,
 }
+
+G.preset:setIndex(1, game)
+G.optionChanged(G.preset.key, game)
 
 -- ORIGINAL -> QUALITY
 G.preset:row().step(game, 1)
