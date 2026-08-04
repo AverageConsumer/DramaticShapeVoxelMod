@@ -2,6 +2,8 @@
 -- hardcoding a location table or rebuilding its ROM-derived resources each
 -- frame.
 
+local ROOT = (((arg and arg[0]) or ""):match(
+  "^(.*)[/\\]tests[/\\][^/\\]+$")) or "."
 local released, townMapBuilds, townMapDraws = 0, 0, 0
 local footer, clearColor
 
@@ -85,7 +87,7 @@ local V = {
     return Voxel
   end,
 }
-local Loading = assert(loadfile("lib/VoxelLoading.lua"))(V)
+local Loading = assert(loadfile(ROOT .. "/lib/VoxelLoading.lua"))(V)
 
 local first = Loading.draw(1920, 1080, 3)
 assert(first, "Town Map cover did not return its canvas")

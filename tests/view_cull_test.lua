@@ -2,8 +2,10 @@
 -- Runs without LOVE or the game SDK:
 --   lua tests/view_cull_test.lua
 
-local Mat4 = assert(loadfile("lib/Mat4.lua"))()
-local ViewCull = assert(loadfile("lib/ViewCull.lua"))()
+local ROOT = (((arg and arg[0]) or ""):match(
+  "^(.*)[/\\]tests[/\\][^/\\]+$")) or "."
+local Mat4 = assert(loadfile(ROOT .. "/lib/Mat4.lua"))()
+local ViewCull = assert(loadfile(ROOT .. "/lib/ViewCull.lua"))()
 
 local function box(x0, x1, y0, y1, z0, z1)
   return { x0 = x0, x1 = x1, y0 = y0, y1 = y1, z0 = z0, z1 = z1 }

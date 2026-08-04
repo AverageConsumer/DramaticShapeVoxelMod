@@ -2,6 +2,8 @@
 -- Runs without LOVE or the game SDK:
 --   lua tests/build_budget_test.lua
 
+local ROOT = (((arg and arg[0]) or ""):match(
+  "^(.*)[/\\]tests[/\\][^/\\]+$")) or "."
 local now = 0
 love = {
   timer = {
@@ -9,7 +11,7 @@ love = {
   },
 }
 
-local Budget = assert(loadfile("lib/BuildBudget.lua"))()
+local Budget = assert(loadfile(ROOT .. "/lib/BuildBudget.lua"))()
 local ticks = 0
 local co = coroutine.create(function()
   while ticks < 10 do

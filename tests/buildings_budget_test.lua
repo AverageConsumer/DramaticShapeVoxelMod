@@ -1,6 +1,8 @@
 -- Regression: stamping one cached authored building must stay cooperative.
 -- The geometry copy used to be one atomic 60-120 ms operation on Android.
 
+local ROOT = (((arg and arg[0]) or ""):match(
+  "^(.*)[/\\]tests[/\\][^/\\]+$")) or "."
 local now = 0
 love = {
   timer = {
@@ -11,14 +13,14 @@ love = {
   },
 }
 
-local Budget = assert(loadfile("lib/BuildBudget.lua"))()
+local Budget = assert(loadfile(ROOT .. "/lib/BuildBudget.lua"))()
 local V = {
   require = function(name)
     assert(name == "BuildBudget")
     return Budget
   end,
 }
-local Buildings = assert(loadfile("lib/Buildings.lua"))(V)
+local Buildings = assert(loadfile(ROOT .. "/lib/Buildings.lua"))(V)
 
 local quads = {}
 for i = 1, 160 do

@@ -2,6 +2,8 @@
 -- Runs without the game SDK:
 --   lua tests/graphics_settings_test.lua
 
+local ROOT = (((arg and arg[0]) or ""):match(
+  "^(.*)[/\\]tests[/\\][^/\\]+$")) or "."
 local stored = {}
 local writes = 0
 
@@ -17,7 +19,7 @@ local V = {
 local modules = {}
 function V.require(name)
   if modules[name] then return modules[name] end
-  local chunk = assert(loadfile("lib/" .. name .. ".lua"))
+  local chunk = assert(loadfile(ROOT .. "/lib/" .. name .. ".lua"))
   modules[name] = chunk(V)
   return modules[name]
 end
