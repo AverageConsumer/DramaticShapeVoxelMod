@@ -961,7 +961,6 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       end
       ShadowMap.draw(ChunkMesher.flowers(map), atlasFor(map), sunModel)
     end
-
     drawTerrain(state.map, terrain, 0, 0)
     for i, nb in ipairs(neighborsOf(state)) do
       drawTerrain(nb.map, nbMesh[i], nb.ox, nb.oy)
@@ -991,6 +990,14 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
       end)
     end
     ShadowMap.sprites(false)
+    -- The optional disc stage does not move, so it belongs to the cached
+    -- terrain layer rather than the per-frame actor layer.
+    pcall(function()
+      local stageArena, stageY = V.require("OverworldBattle").stage()
+      if stageArena and stageArena.discs then
+        V.require("StadiumStage").cast(ShadowMap, stageArena, stageY or 0)
+      end
+    end)
     ShadowMap.finishStatic(staticSig, cx, cy)
   end
 
@@ -1016,6 +1023,8 @@ local function castShadows(state, terrain, nbMesh, posed, cx, cy, vw, vh,
                      ShadowMap.snug(card.model))
     end
     ShadowMap.sprites(false)
+    -- Stadium poses animate with the combatants, not with static terrain.
+    pcall(function() V.require("Stadium").cast(ShadowMap) end)
     ShadowMap.finishActors(dynamicSig)
   end
 end
@@ -1235,6 +1244,24 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
         Voxel3D.draw(BattleBillboard.mesh(), card.tex, card.model,
                      BattleBillboard.PULL)
       end
+      -- and, on the STADIUM rungs, the models -- the same skinned meshes the
+      -- flat pass and the sun already used this frame, drawn again through
+      -- THIS eye. Unlike the cards there is nothing per-eye about them: a
+      -- model faces its opponent, not the viewer, so both eyes see the same
+      -- pose from their own seats, which is what makes it read as solid.
+      --
+      -- On a disc rung the platforms come with them. In a headset the world is
+      -- still drawn -- the player is standing IN it, which is the whole point
+      -- of the headset, so the rung's "no map" does not apply here -- and the
+      -- discs then read as a stage set down on the ground, which is what they
+      -- are.
+      pcall(function()
+        local stageArena, stageY = V.require("OverworldBattle").stage()
+        if stageArena and stageArena.discs then
+          V.require("StadiumStage").draw(stageArena, stageY or 0)
+        end
+        V.require("Stadium").draw(BattleBillboard.PULL)
+      end)
       if battleTex.flash then Voxel3D.flatten(nil) end
       -- and the MOVE ANIMATIONS, standing on the same arena: the
       -- engine's own effects layer on the plane through both cells
