@@ -18,7 +18,7 @@ first-person, third-person, staged-battle and VR features preserved.
 
 ## Install on Android
 
-Download `DRAMATIC_SHAPE-1.6.0-android.1.zip` from this repository's release page and
+Download `DRAMATIC_SHAPE-1.6.0-android.2.zip` from this repository's release page and
 import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
 first if it is installed; both packages intentionally use the same mod ID.
 Confirm the experimental-mod warning and enable it. A fresh setup starts at

@@ -3179,6 +3179,25 @@ local hudShot = { lx = 100, ly = 12, scale = 3, pw = 1000, ph = 500 }
 local hudRects, bandX = Battles.snapRects(hudShot)
 local hudRect = Battles.HUD_RECT
 
+-- Companion-screen mods can move both status panels off the game display.
+-- The engine already suppresses their glyphs through this seam; the voxel
+-- backings must follow or they survive as two empty frosted rectangles.
+local hudBattle = {
+  enemy = { fainted = false }, player = {},
+  growInScale = function() return false end,
+  statusHUDVisible = function() return true end,
+}
+local enemyLive, playerLive = Battles.hudLive(hudBattle, 0)
+T.eq(enemyLive, true, "a visible engine status HUD gets the enemy backing")
+T.eq(playerLive, true, "and the player backing")
+hudBattle.statusHUDVisible = function() return false end
+enemyLive, playerLive = Battles.hudLive(hudBattle, 0)
+T.eq(enemyLive, false, "a hidden engine status HUD gets no enemy backing")
+T.eq(playerLive, false, "and no orphaned player backing")
+hudBattle.statusHUDVisible = nil
+enemyLive, playerLive = Battles.hudLive(hudBattle, 0)
+T.eq(enemyLive and playerLive, true, "older engines keep their original HUD backings")
+
 T.eq(hudRects.enemy[1], 0, "the foe's panel starts at the window's left edge")
 T.eq(hudRects.player[1] + hudRects.player[3], hudShot.pw,
   "and the player's ends at the right one")

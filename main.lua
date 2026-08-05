@@ -1304,7 +1304,7 @@ if Perf.enabled then
   end
 end
 
-mod.exports.version = "1.5.5-android.1"
+mod.exports.version = "1.6.0-android.2"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V

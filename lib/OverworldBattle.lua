@@ -1387,12 +1387,14 @@ end
 
 -- Whether each HUD block is on screen this frame.
 --
--- READ-ONLY duplicates of drawHUDs' own two guards, because there is no seam
--- that reports "the enemy HUD is up". A panel under a HUD that is not there
--- would be a frosted slab floating in the arena, so it is worth mirroring;
--- the worst a future engine change can do is show an empty one for a frame,
--- never break a battle.
+-- READ-ONLY duplicates of drawHUDs' own guards. Newer engines also expose the
+-- shared status-HUD visibility seam used by companion-screen mods; honour it
+-- before mirroring the per-side guards. Otherwise the engine hides the ink but
+-- these frosted backings remain as empty slabs in the arena.
 function OverworldBattle.hudLive(battle, slide)
+  if battle.statusHUDVisible and not battle:statusHUDVisible() then
+    return false, false
+  end
   local enemy = battle.enemy and not battle.showEnemyTrainer
                 and not battle.enemySendingOut
                 and not battle:growInScale(battle.enemy) and slide == 0

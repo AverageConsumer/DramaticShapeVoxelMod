@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0-android.2
+
+- Removed empty frosted status panels when a companion-screen mod moves the
+  battle HUD to another display. Normal single-screen HUDs are unchanged.
+- Corrected the runtime version export to match the package version.
+
 ## 1.6.0-android.1
 
 - Rebased the Android performance fork on upstream 1.6.0.
