@@ -146,19 +146,16 @@ T.eq(byLabel.VOXEL.value(), "FULL", "the row renders the current rung's label")
 --
 -- None of them is a pipeline -- two parameterise the voxel pass rather than
 -- owning one, and the third decides what a BATTLE is drawn over, which is
--- not a stage the registry has -- so they reach the same menu through the
--- ui.options.rows hook, and store themselves where the mod manager's
--- settings page looks.
+-- not a stage the registry has. They live on the mod manager's own settings
+-- page instead of duplicating themselves across the global OPTIONS menu.
 
 local Runtime = require("src.mods.Runtime")
 local VoxelState = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelState")
 
 -- ------- FULL is a preset that owns the rows describing the LOOK
 --
--- While it is selected the authored scene-style settings it drives come OFF
--- the menu. T-SHIFT, renderer quality and both battle rows remain reachable:
--- FULL supplies their starting values and then lets go, which is what makes it
--- a preset rather than a lock.
+-- T-SHIFT and the headline 3D-BTL row remain on the global menu. The detailed
+-- settings stay on the mod page on every rung.
 Pipelines.setLevel("voxel", VoxelState.FULL_LEVEL)
 local fullRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                               { data = Data },
@@ -172,10 +169,8 @@ T.check(fullIds["pipeline:tiltshift"],
 T.check(not fullIds["DRAMATIC_SHAPE:grid"], "and V-GRID")
 T.check(not fullIds["DRAMATIC_SHAPE:curve"], "and V-CURVE")
 T.check(not fullIds["DRAMATIC_SHAPE:daytime"], "and DAYTIME")
-T.check(fullIds["DRAMATIC_SHAPE:graphicsPreset"],
-  "FULL leaves GPU quality controls reachable")
-T.check(fullIds["DRAMATIC_SHAPE:renderScale"], "including internal resolution")
-T.check(fullIds["DRAMATIC_SHAPE:shadowQuality"], "and shadow resolution")
+T.check(not fullIds["DRAMATIC_SHAPE:graphicsPreset"],
+  "GPU quality controls stay on the mod page")
 
 -- The Android fork starts on the measured Thor profile while keeping every
 -- control independently adjustable.
@@ -216,17 +211,13 @@ do
   Graphics.optionChanged(Graphics.preset.key, qualityGame)
 end
 
--- but the battle rows survive it: they are not knobs on the look, and FULL
--- sets them once rather than holding them, so a player who wants the classic
--- back sprite (or no staged fights at all) can still say so from inside FULL
+-- The headline battle switch survives it; detailed battle presentation stays
+-- on the mod page.
 T.check(fullIds["DRAMATIC_SHAPE:battles"], "3D-BTL is still on the menu under FULL")
-T.check(fullIds["DRAMATIC_SHAPE:battleBack"], "and BACK SPRITES with it")
--- and AA, for the opposite reason: it is not a knob on the look at all, it is
--- what the look COSTS, and only the player knows what their machine can carry
-T.check(fullIds["DRAMATIC_SHAPE:aa"], "and AA, which FULL neither sets nor owns")
--- VR survives FULL on AA's reasoning: whether a headset is on the desk is
--- not the diorama's to decide
-T.check(fullIds["DRAMATIC_SHAPE:vr"], "and VR, likewise the hardware's question")
+T.check(not fullIds["DRAMATIC_SHAPE:battleBack"],
+  "while BACK SPRITES stays on the mod page")
+T.check(not fullIds["DRAMATIC_SHAPE:aa"] and not fullIds["DRAMATIC_SHAPE:vr"],
+  "hardware-specific controls stay there too")
 
 -- DAYTIME is not only hidden under FULL, it is HELD at SYNC: the row cannot
 -- be reached while FULL owns it, so a value changed underneath (the mod
@@ -401,11 +392,8 @@ T.check(not fullFxIds["tilt"] and not fullFxIds["gbcfx"],
 Pipelines.setLevel("voxel", 2)
 end
 
--- ------- and off FULL, the rows come back, grouped with the mode
+-- ------- the global menu keeps only the headline battle row and ROM action
 --
--- The engine splices a pipeline row in beside TILT and lands a mod's own
--- additions at the END of the list, which would leave this mode's four rows
--- in two places with unrelated rows between them.
 Pipelines.setLevel("voxel", 2)
 local grouped = Runtime.call("ui.options.rows", function(_, r) return r end,
                              { data = Data },
@@ -414,19 +402,17 @@ local grouped = Runtime.call("ui.options.rows", function(_, r) return r end,
                                { id = "void_fill" } })
 local order = {}
 for i, row in ipairs(grouped) do order[row.id] = i end
-T.check(order["pipeline:tiltshift"] < order["DRAMATIC_SHAPE:grid"],
-  "the mode's settings follow its pipeline rows")
-T.eq(order["DRAMATIC_SHAPE:battles"] - order["pipeline:tiltshift"],
-  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 5,
-  "and sit in one unbroken block, not scattered to the end of the list")
+T.eq(order["DRAMATIC_SHAPE:battles"] - order["pipeline:tiltshift"], 1,
+  "3D-BTL follows the mode's pipeline rows")
+T.eq(order["DRAMATIC_SHAPE:stadiumRom"] - order["DRAMATIC_SHAPE:battles"], 1,
+  "and the ROM action follows the battle row")
+T.check(not order["DRAMATIC_SHAPE:grid"]
+        and not order["DRAMATIC_SHAPE:graphicsPreset"],
+  "detail settings are not duplicated onto the global menu")
 T.check(order["void_fill"] > order["DRAMATIC_SHAPE:battles"],
   "with the engine's own later rows still after them")
 
--- ------- the open menu notices when FULL is stepped onto or off
---
--- OptionsMenu reads its row list every frame but builds it once, so without
--- a rebuild the rows FULL owns stay on screen until the menu is reopened --
--- and stepping OFF FULL never brings them back.
+-- ------- the open menu still follows the headline battle switch
 local OptionsMenu = require("src.ui.OptionsMenu")
 local pressed = {}
 local menuGame = {
@@ -443,30 +429,12 @@ local menu = OptionsMenu.new(menuGame)
 local function rowIndex(m, id)
   for i, row in ipairs(m.rows) do if row.id == id then return i end end
 end
-T.check(rowIndex(menu, "DRAMATIC_SHAPE:grid"),
-  "off FULL the menu opens with the mode's settings on it")
-
--- step the VOXEL row from 15 down to FULL, the way the player would
-menu.index = rowIndex(menu, "pipeline:voxel")
-pressed = { left = true }
-menu:update(0)
-pressed = {}
-T.eq(Pipelines.level("voxel"), 1, "the step landed on FULL")
 T.check(not rowIndex(menu, "DRAMATIC_SHAPE:grid"),
-  "and the rows FULL owns left the OPEN menu at once")
-T.check(rowIndex(menu, "pipeline:tiltshift"),
-  "while the independently tunable T-SHIFT row stays reachable")
-T.check(menu.index <= #menu.rows + 1, "the cursor stayed in range")
-
--- and back off it again
-menu.index = rowIndex(menu, "pipeline:voxel")
-pressed = { right = true }
-menu:update(0)
-pressed = {}
-T.eq(Pipelines.level("voxel"), 2, "the step left FULL")
-T.check(rowIndex(menu, "DRAMATIC_SHAPE:grid"),
-  "and the rows came straight back without reopening the menu")
-T.check(rowIndex(menu, "pipeline:tiltshift"), "T-SHIFT too")
+  "the global menu omits detailed settings")
+T.check(rowIndex(menu, "pipeline:voxel")
+        and rowIndex(menu, "pipeline:tiltshift")
+        and rowIndex(menu, "DRAMATIC_SHAPE:battles"),
+  "while VOXEL, T-SHIFT and 3D-BTL stay reachable")
 
 -- ------- 3D-BTL owns BATTLE LAYOUT, and takes it off the OPEN menu too
 --
@@ -494,31 +462,42 @@ T.eq(layoutMenu.index, rowIndex(layoutMenu, "DRAMATIC_SHAPE:battles"),
   "with the cursor still on the row the player just used")
 end
 
--- level 2 is the "15" rung: any rung that is not FULL, so the settings the
--- preset owns are back on the menu
+-- Every stored setting is still present on the mod's own options page.
 Pipelines.setLevel("voxel", 2)
 local hookedRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                                { data = Data }, { { id = "text_speed" } })
-T.eq(#hookedRows,
-  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 11,
-  "the options hook added a row per setting plus the Stadium ROM action")
+T.eq(#hookedRows, 3,
+  "the global hook adds only 3D-BTL and the Stadium ROM action")
 hookedRows.byId = {}
 for _, row in ipairs(hookedRows) do hookedRows.byId[row.id] = row end
-local grid = hookedRows.byId["DRAMATIC_SHAPE:grid"]
-local curve = hookedRows.byId["DRAMATIC_SHAPE:curve"]
-local water = hookedRows.byId["DRAMATIC_SHAPE:water"]
+local grid = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelGrid").setting:row()
+local curve = run.loader.exports.DRAMATIC_SHAPE.lib.require("WorldCurve").setting:row()
+local water = run.loader.exports.DRAMATIC_SHAPE.lib.require("Water").setting:row()
 local battles = hookedRows.byId["DRAMATIC_SHAPE:battles"]
-local backRow = hookedRows.byId["DRAMATIC_SHAPE:battleBack"]
-local daytime = hookedRows.byId["DRAMATIC_SHAPE:daytime"]
+local backRow = run.loader.exports.DRAMATIC_SHAPE.lib.require(
+  "OverworldBattle").backSetting:row()
+local daytime = run.loader.exports.DRAMATIC_SHAPE.lib.require("DayNight").setting:row()
+
+do
+  local keys = {}
+  for _, row in ipairs(run.loader.optionSchemas.DRAMATIC_SHAPE or {}) do
+    keys[row.key] = true
+  end
+  T.check(keys.grid and keys.curve and keys.water and keys.battles
+          and keys.battleBack and keys.daytime and keys.graphicsPreset,
+    "the removed global rows remain available on the mod options page")
+end
 T.eq(water.label, "WATER", "the water row carries its label")
 T.eq(water.value(), "FULL",
   "and defaults to FULL -- reflections are the point of having the row")
 water.step({ save = { options = {} }, mods = { modOptions = {} } }, 1)
 T.eq(water.value(), "SKY",
   "stepping down drops the screen-space march and keeps the sky, sun and moon")
-T.eq(hookedRows.byId["DRAMATIC_SHAPE:atmos"].label, "FOREST FX",
+T.eq(run.loader.exports.DRAMATIC_SHAPE.lib.require(
+  "ForestAtmos").setting:row().label, "FOREST FX",
   "the atmosphere row carries its label")
-T.eq(hookedRows.byId["DRAMATIC_SHAPE:atmos"].value(), "FULL",
+T.eq(run.loader.exports.DRAMATIC_SHAPE.lib.require(
+  "ForestAtmos").setting:row().value(), "FULL",
   "and defaults to FULL -- it only spends anything on a map with an "
   .. "atmosphere entry, which is one forest today")
 T.eq(daytime.label, "DAYTIME", "the day/night row carries its label")
@@ -604,7 +583,7 @@ do
 local AntiAlias = run.loader.exports.DRAMATIC_SHAPE.lib.require("AntiAlias")
 local VoxelGrid = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelGrid")
 local aaGame = { save = { options = {} }, mods = { modOptions = {} } }
-local aa = hookedRows.byId["DRAMATIC_SHAPE:aa"]
+local aa = AntiAlias.setting:row()
 T.eq(aa.label, "AA", "the anti-aliasing row carries its label")
 T.eq(aa.value(), "OFF",
   "and starts off -- supersampling is a cost knob, and a mod must not spend "
@@ -3427,25 +3406,24 @@ T.eq(Battles.backPinned(), false,
   "with 3D-BTL off the setting decides nothing, whatever it is left at")
 T.eq(Battles.backSetting:get(), true, "without being rewritten underneath")
 
--- ...so the row comes off the menu with it, on the same reasoning the mod's
--- other absent rows come off: a row that no longer decides anything is worse
--- than no row
+-- The detailed BACK SPRITES control stays on the mod page; the global menu
+-- carries only the headline 3D-BTL switch in either state.
 local offRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                              backGame, { { id = "tilt" } })
 local offIds = {}
 for _, row in ipairs(offRows) do offIds[row.id] = true end
 T.check(offIds["DRAMATIC_SHAPE:battles"], "3D-BTL itself is still offered")
 T.check(not offIds["DRAMATIC_SHAPE:battleBack"],
-  "but BACK SPRITES is off the menu while there is no staged fight to be about")
+  "but BACK SPRITES is not duplicated onto the global menu")
 
 Battles.setting:setValue(true, backGame)
 local onRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                             backGame, { { id = "tilt" } })
 local onAt = {}
 for i, row in ipairs(onRows) do onAt[row.id] = i end
-T.check(onAt["DRAMATIC_SHAPE:battleBack"], "switched back on, so is the row")
-T.eq(onAt["DRAMATIC_SHAPE:battleBack"] - onAt["DRAMATIC_SHAPE:battles"], 1,
-  "directly under the row it belongs to")
+T.check(onAt["DRAMATIC_SHAPE:battles"]
+        and not onAt["DRAMATIC_SHAPE:battleBack"],
+  "switching battles on does not repollute the global menu")
 
 -- ------- and which pic is the pinned one is asked with the other side BLANKED
 --
@@ -5819,34 +5797,19 @@ end)()
 
   -- ------- SMOOTH TURN belongs to the headset
   --
-  -- A comfort setting for a device that is not plugged in decides
-  -- nothing, so the row exists only while VR is ON -- and it is OFF by
-  -- default, because a software turn moves the world past a head that
-  -- did not move and that is how you make somebody ill in a headset.
+  -- It is detailed configuration, so it lives on the mod page rather than
+  -- appearing and disappearing in the global OPTIONS list.
   local VRMod = lib.require("VR")
   T.eq(VRMod.smoothTurn:get(), false, "SMOOTH TURN is off out of the box")
 
-  local function optionRows()
-    local out = Runtime.call("ui.options.rows", function(_, r) return r end,
-                             { data = Data }, { { id = "tilt" } })
-    local ids = {}
-    for _, row in ipairs(out) do ids[row.id] = row end
-    return ids
+  local hasSmooth = false
+  for _, row in ipairs(run.loader.optionSchemas.DRAMATIC_SHAPE or {}) do
+    if row.key == "smoothturn" then hasSmooth = true break end
   end
-
-  Pipelines.setLevel("voxel", 3)          -- off FULL, which owns other rows
-  VRMod.setting:sync(false)
-  T.check(not optionRows()["DRAMATIC_SHAPE:smoothturn"],
-    "with VR off the row is not on the OPTIONS menu")
-
-  VRMod.setting:sync(true)
-  local smoothRow = optionRows()["DRAMATIC_SHAPE:smoothturn"]
-  T.check(smoothRow ~= nil, "and with VR on it is")
-  if smoothRow then
-    T.eq(smoothRow.label, "SMOOTH TURN", "under its own name")
-    T.eq(smoothRow.value(), "OFF", "reading OFF until the player says otherwise")
-  end
-  VRMod.setting:sync(false)
+  T.check(hasSmooth, "SMOOTH TURN remains available on the mod options page")
+  local smoothRow = VRMod.smoothTurn:row()
+  T.eq(smoothRow.label, "SMOOTH TURN", "under its own name")
+  T.eq(smoothRow.value(), "OFF", "reading OFF until the player says otherwise")
 
   -- ------- the gun's own bookkeeping
 

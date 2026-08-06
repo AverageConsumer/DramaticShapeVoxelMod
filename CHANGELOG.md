@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Kept the global OPTIONS menu focused on VOXEL, T-SHIFT, 3D-BTL and the
+  Stadium ROM action. Detailed renderer and presentation controls now live
+  only under MODS > DRAMATIC SHAPE > OPTIONS; saved values and defaults are
+  unchanged.
+
 ## 1.6.2-android.1
 
 - Rebased the Android performance fork on upstream 1.6.2.

@@ -526,8 +526,6 @@ local OWNED_SETTINGS = {
     .. "shoreline, the trees and the buildings behind it; SKY is the sky, "
     .. "the sun and the moon alone, which is most of the look for a "
     .. "fraction of the cost." },
-  -- `full` for the AA reason: additive shafts are fill rate, and under 4X
-  -- supersampling that is a question about the hardware, not the look.
   { ForestAtmos.setting,
     "The air of the deep woods (Viridian Forest): a ground haze, and "
     .. "volumetric light let down through the unseen canopy overhead -- "
@@ -536,14 +534,7 @@ local OWNED_SETTINGS = {
     .. "keeps the haze, halves the beam march and stands the particles "
     .. "down. On a phone the row offers LOW alone: the beams need a "
     .. "depth texture the pass can read back, and no mobile driver here "
-    .. "grants one.",
-    full = true },
-  -- `full` marks a row FULL does not take away. FULL owns the diorama's own
-  -- knobs; what a battle is drawn over, and how it is framed, are not that.
-  -- Off the OPTIONS menu while VR is on: the headset REQUIRES staged
-  -- battles (OverworldBattle.enabled answers true regardless of this row)
-  -- and forbids back sprites (backPinned answers false), so both rows
-  -- decide nothing there and a dead switch on the menu reads as broken.
+    .. "grants one." },
   { OverworldBattle.setting,
     "Fight in three dimensions, shot over the shoulder with a slow parallax "
     .. "drift. 2D-3D stands the game's own battle pics up as cards; STADIUM "
@@ -556,28 +547,16 @@ local OWNED_SETTINGS = {
     .. "appear once the models have been built, and building them needs a "
     .. "Pokemon Stadium (US) 1.0 ROM of your own -- import it from the "
     .. "STADIUM ROM row, or drop it in the baseroms folder and restart. No "
-    .. "other version works: the reader is keyed to that one cartridge.",
-    when = function() return not VR.enabled() end, full = true },
-  -- Only offered while a fight can actually be staged on the map: with 3D-BTL
-  -- off the engine draws the classic screen, which is this row's ON already,
-  -- and a row that no longer decides anything is worse than no row.
+    .. "other version works: the reader is keyed to that one cartridge." },
   { OverworldBattle.backSetting,
     "Keep your own Pokemon on the battle menu, seen from behind in its "
     .. "original slot, instead of standing it on the map facing the foe. "
-    .. "The foe is still out there on its own tile.",
-    when = function() return stagedBattles() and not VR.enabled() end,
-    full = true },
+    .. "The foe is still out there on its own tile." },
   { DayNight.setting,
     "What time it is outdoors: pin the sky to DAY, NIGHT, DUSK or DAWN, "
     .. "let CYCLE run it -- ten minutes of sun, ten of moon, with the "
     .. "shadows, the sky and the light following -- or SYNC it to the "
     .. "clock on the wall, so Kanto's evening falls when yours does." },
-  -- Marked `full` for the opposite reason the battle rows are: this is not a
-  -- knob on the look at all, it is what the look COSTS. FULL is a preset for
-  -- the diorama, not a licence to spend four times the fill rate on the
-  -- machine it happens to be running on, so it neither sets this nor takes
-  -- the row away -- the player decides what their hardware can carry, from
-  -- inside FULL like anywhere else.
   { AntiAlias.setting,
     "Smooth the stair-stepped edges of the 3D world -- roof ridges, ledge "
     .. "lips, a tree against the sky -- by rendering the diorama larger than "
@@ -585,36 +564,25 @@ local OWNED_SETTINGS = {
     .. "softens with them, the tileset's own texels included, so the diorama "
     .. "reads smoother rather than sharper. 2X costs half again as many "
     .. "pixels in each direction and 4X twice, which makes this the most "
-    .. "expensive row in the mod.",
-    full = true },
-  -- `full` for the same reason as AA: not a knob on the look, a question
-  -- about the hardware on the desk.
+    .. "expensive row in the mod." },
   { VR.setting,
     "PCVR through OpenXR (SteamVR, Oculus, WMR). The diorama becomes a "
     .. "tabletop model your head moves around; the 1ST rung stands you "
     .. "inside the world at life size, looking where the headset looks. "
     .. "Menus and dialogs float on a panel. Needs a Windows OpenXR runtime "
     .. "and the mod running from a real folder; without them the row stays "
-    .. "and the game stays flat, with the reason on the console.",
-    -- on Windows the row stays even when a runtime is missing (the console
-    -- says why); off Windows -- mobile above all -- there is no VR to have
-    -- and the row does not exist
-    when = function() return VR.supported() end, full = true },
-  -- Under the VR row and only while it is ON: a comfort setting for a
-  -- device that is not plugged in decides nothing, and this one is read
-  -- exclusively by the headset's right stick.
+    .. "and the game stays flat, with the reason on the console." },
   { VR.smoothTurn,
     "Turn smoothly with the right stick instead of snapping 45 degrees a "
     .. "flick. OFF by default, and deliberately: a software turn moves the "
     .. "world past a head that did not move, which is the most reliable way "
     .. "to make somebody ill in a headset. Turn it on if you have your sea "
-    .. "legs and want the continuity.",
-    when = function() return VR.enabled() end, full = true },
+    .. "legs and want the continuity." },
 }
 
 local SETTINGS = {}
 for _, entry in ipairs(GraphicsSettings.entries) do
-  SETTINGS[#SETTINGS + 1] = { entry[1], entry[2], full = true }
+  SETTINGS[#SETTINGS + 1] = { entry[1], entry[2] }
 end
 for _, entry in ipairs(OWNED_SETTINGS) do
   SETTINGS[#SETTINGS + 1] = entry
@@ -622,9 +590,7 @@ end
 
 local schema = {}
 for _, entry in ipairs(SETTINGS) do
-  -- the VR rows are absent from the mod manager's page too where the
-  -- platform cannot do VR at all -- the OPTIONS menu's `when` gates are
-  -- situational (a row hidden for now), this one is existential
+  -- VR rows are absent where the platform cannot do VR at all.
   local vrOnly = entry[1] == VR.setting or entry[1] == VR.smoothTurn
   if not vrOnly or VR.supported() then
     schema[#schema + 1] = entry[1]:schema(entry[2])
@@ -779,17 +745,17 @@ do
   end
 end
 
--- ------- the mode's rows, kept together
+-- ------- the two headline rows stay on OPTIONS
 --
 -- The engine splices a pipeline's row in beside TILT, because a display mode
--- belongs with the other display modes; a mod's own ui.options.rows
--- additions land at the END of the list. That left this mod's four rows in
--- two places with unrelated engine rows between them, which reads as two
--- unrelated features rather than one mode with settings.
+-- belongs with the other display modes. Keep only the battle-mode row beside
+-- it: VOXEL and 3D-BTL are the two switches that turn this mod's headline
+-- features on, while the renderer and presentation knobs already have a home
+-- under MODS > DRAMATIC SHAPE > OPTIONS.
 --
--- So the plain settings are inserted directly after the last of this mod's
--- PIPELINE rows instead of appended. Nothing else moves: the block lands
--- where the engine already decided display modes go.
+-- STADIUM ROM stays here too because it is an action, not a stored setting,
+-- and the mod-settings schema has no action row. Insert both directly after
+-- this mod's pipeline rows rather than appending them to the end.
 local function insertGrouped(out, extra)
   local anchor = nil
   for i, row in ipairs(out) do
@@ -804,9 +770,6 @@ local function insertGrouped(out, extra)
   return out
 end
 
--- FULL owns the authored scene-style rows below, so they leave the menu while
--- it is selected. Renderer quality, T-SHIFT and the battle rows remain live:
--- FULL supplies their starting values but does not hold them every frame.
 local function dropRow(out, id)
   for i = #out, 1, -1 do
     if type(out[i]) == "table" and out[i].id == id then table.remove(out, i) end
@@ -894,30 +857,14 @@ mod.hooks:wrap("ui.options.rows", function(next, game, rows)
     OverworldBattle.forceOG(game)
     dropRow(out, "battleLayout")
   end
-  local full = Voxel.isFull(Pipelines.level("voxel"))
-  if full then
-    -- DAYTIME is one of the authored look rows FULL owns and hides; hold its
-    -- unreachable value at the preset's SYNC setting.
+  if Voxel.isFull(Pipelines.level("voxel")) then
+    -- FULL owns DAYTIME and holds it at SYNC. The row lives on the mod's page
+    -- now, and mod.options_changed enforces the same pin when it is edited
+    -- there; keep this guard for old saves arriving through the main menu.
     DayNight.forceSync(game)
   end
   local extra = {}
-  for _, entry in ipairs(SETTINGS) do
-    -- Two things decide whether a row is offered.
-    --
-    -- FULL: a preset that owns the look, so the rows that describe the look go
-    -- with it. The BATTLE rows are not that -- 3D-BTL decides what a fight is
-    -- drawn OVER and BACK SPRITES how it is framed, and neither is a knob on
-    -- the diorama FULL is a preset for. FULL still SETS them on arrival (see
-    -- applyFull); it does not hold them, so leaving them on the menu is the
-    -- difference between a preset and a lock.
-    --
-    -- And a row whose own switch is off the table this frame (BACK SPRITES,
-    -- which needs a staged fight to be about) is left off with it. The mod
-    -- manager's page carries every one of them either way.
-    local offered = (entry.full or not full)
-                    and (not entry.when or entry.when())
-    if offered then extra[#extra + 1] = entry[1]:row() end
-  end
+  if not VR.enabled() then extra[#extra + 1] = OverworldBattle.setting:row() end
   -- and the ROM import, which is an ACTION and not a setting: there is no
   -- rung to store, nothing for the mod manager's page to persist and nothing
   -- to restore on the next boot, so it is appended here rather than living in
@@ -1036,24 +983,14 @@ mod.events:on("map.reloaded", function(payload)
   if mapId then ForestAtmos.invalidate(mapId) end
 end)
 
--- ------- rows come and go, so the menu has to notice
+-- ------- BATTLE LAYOUT follows the headline battle row
 --
--- OptionsMenu builds its row list ONCE, when it is opened, and then reads
--- that list every frame. So stepping the VOXEL row onto or off FULL changed
--- which rows the hook would return but not which rows were on screen -- the
--- settings FULL owns stayed visible until the menu was closed and reopened,
--- and a player who stepped off FULL could not see the rows come back.
---
--- Rebuilt in place, and only on a step that changes the LIST: crossing FULL,
--- or toggling 3D-BTL, which is the other row that owns one (BATTLE LAYOUT).
--- Every other rung returns the same list, and rebuilding on all of them would
--- rerun every mod's ui.options.rows hook once per keypress. The cursor is
--- clamped rather than reset, so it stays on the row it was just used on
--- instead of jumping to the top when the list below it shortens.
+-- OptionsMenu builds its row list once. 3D-BTL is the one visible mod setting
+-- that can still change that list: staged battles pin and remove the engine's
+-- BATTLE LAYOUT row. Rebuild only when that switch changes.
 do
   local OptionsMenu = require("src.ui.OptionsMenu")
   if not OptionsMenu.dramaticShapeFullHook then
-    local Pipelines = require("src.render.Pipelines")
     local inner = OptionsMenu.update
 
     local function idAt(menu, index)
@@ -1062,18 +999,10 @@ do
     end
 
     function OptionsMenu:update(dt)
-      local before = Pipelines.level("voxel")
       local hadBattles = OverworldBattle.enabled()
-      -- the VR row hides the two battle rows while it is on, so stepping
-      -- it changes the LIST exactly the way 3D-BTL does
-      local hadVR = VR.enabled()
       local wasOn = idAt(self, self.index)
       inner(self, dt)
-      local after = Pipelines.level("voxel")
-      local crossedFull = after ~= before
-                          and (Voxel.isFull(before) or Voxel.isFull(after))
-      if crossedFull or OverworldBattle.enabled() ~= hadBattles
-         or VR.enabled() ~= hadVR then
+      if OverworldBattle.enabled() ~= hadBattles then
         local rebuilt = OptionsMenu.new(self.game)
         self.rows = rebuilt.rows
         -- Follow the row the cursor was ON rather than the slot it was in:

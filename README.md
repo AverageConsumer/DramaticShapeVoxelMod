@@ -41,21 +41,22 @@ animated water tiles. This fork does not carry a separate workaround.
 
 ## Controls
 
-Every key is free-roam only, and each one is also a row on the OPTIONS
-menu.
+Every key is free-roam only. The headline **VOXEL**, **T-SHIFT** and
+**3D-BTL** rows stay on the main **OPTIONS** menu; detailed controls live under
+**MODS > DRAMATIC SHAPE > OPTIONS**.
 
 | control | does |
 | --- | --- |
 | `3`, or the **VOXEL** options row | OFF → 15 → 35 → 50 → 75 → 1ST → 3RD → OFF (camera pitch) |
 | `SELECT` (pad / touch) | the same step as `3` — for the machines with no number row |
-| `5`, or the **V-GRID** options row | OFF / ON — a one-pixel wireframe on every voxel |
+| `5`, or the **V-GRID** mod-options row | OFF / ON — a one-pixel wireframe on every voxel |
 | `6`, or the **T-SHIFT** options row | OFF → 1 → 2 → 3 → OFF (miniature blur) |
-| `7`, or the **V-CURVE** options row | OFF → 1 → 2 → 3 — bend the world over the horizon |
+| `7`, or the **V-CURVE** mod-options row | OFF → 1 → 2 → 3 — bend the world over the horizon |
 | `8`, or the **3D-BTL** options row | 2D-3D A / 2D-3D B / STADIUM A / STADIUM B / OFF — fight in 3D instead of on a white field. **A** stages it on the map, **B** on two discs against the sky; **2D-3D** uses the game's own battle pics and **STADIUM** the Pokémon Stadium battle models |
-| `9`, or the **WATER** options row | FULL / SKY / OFF — waves and reflections on water. **SKY** gives the surface its pixel-tall wave columns and puts the sky, the sun, the moon and the cast in them; **FULL** adds a screen-space ray march that also reflects the shoreline, the trees and the buildings standing behind it |
-| the **BACK SPRITES** options row | OFF / ON — keep your own Pokémon on the battle menu, seen from behind in its classic slot, instead of standing it on the map; the foe is still out there. Only on the menu while **3D-BTL** is on, because it decides nothing without it |
-| the **AA** options row | OFF / 2X / 4X — smooth the stair-stepped edges of the 3D world by rendering the diorama larger than the window and folding it back down. The ladder is samples per display pixel: 2X is a canvas root-two wider and taller, 4X one exactly twice the size. Every edge in the projected picture softens with the silhouettes — the tileset's own texels are quads in a perspective view and cross the pixel grid at the same arbitrary angles — so the diorama reads smoother rather than sharper. The most expensive row in the mod, so it is OFF by default and **FULL** leaves it alone |
-| the **DAYTIME** options row | SYNC / DAY / NIGHT / DUSK / DAWN / CYCLE — what time it is outdoors, on the diorama *and* on the flat 2D world; held at SYNC (and off the menu) while VOXEL is FULL |
+| `9`, or the **WATER** mod-options row | FULL / SKY / OFF — waves and reflections on water. **SKY** gives the surface its pixel-tall wave columns and puts the sky, the sun, the moon and the cast in them; **FULL** adds a screen-space ray march that also reflects the shoreline, the trees and the buildings standing behind it |
+| the **BACK SPRITES** mod-options row | OFF / ON — keep your own Pokémon on the battle menu, seen from behind in its classic slot, instead of standing it on the map; the foe is still out there |
+| the **AA** mod-options row | OFF / 2X / 4X — smooth the stair-stepped edges of the 3D world by rendering the diorama larger than the window and folding it back down. The ladder is samples per display pixel: 2X is a canvas root-two wider and taller, 4X one exactly twice the size. Every edge in the projected picture softens with the silhouettes — the tileset's own texels are quads in a perspective view and cross the pixel grid at the same arbitrary angles — so the diorama reads smoother rather than sharper. The most expensive row in the mod, so it is OFF by default and **FULL** leaves it alone |
+| the **DAYTIME** mod-options row | SYNC / DAY / NIGHT / DUSK / DAWN / CYCLE — what time it is outdoors, on the diorama *and* on the flat 2D world; held at SYNC while VOXEL is FULL |
 
 ## Free-roam cameras (1ST / 3RD)
 
@@ -280,8 +281,9 @@ dark. Nothing the engine draws inside a box moves; only the paper is gone.
 
 ### Graphics tuning
 
-The graphics rows leave the original renderer untouched until you choose a
-different rung. They remain available while **VOXEL** is **FULL**:
+The graphics rows under **MODS > DRAMATIC SHAPE > OPTIONS** leave the original
+renderer untouched until you choose a different rung. They remain available
+while **VOXEL** is **FULL**:
 
 | row | controls |
 |---|---|

@@ -1,5 +1,4 @@
--- One of this mod's own settings: a ladder of values, where it persists,
--- and the row the player cycles it on.
+-- One of this mod's own settings: a ladder of values and where it persists.
 --
 -- The engine gives a render pipeline all of this for free -- ladder,
 -- options row, hotkey, persistence -- but only to something that OWNS a
@@ -11,11 +10,12 @@
 --
 --   options:define   a home in options.modOptions.DRAMATIC_SHAPE, plus a row
 --                    on this mod's page in the mod manager.
---   ui.options.rows  the same setting on the OPTIONS menu, where the
---                    player already goes for VOXEL and T-SHIFT.
+--   row()            an optional global OPTIONS row, used only for the
+--                    headline 3D-BTL switch.
 --
--- Both rows read and write the one stored value, so they cannot disagree.
--- Writing mirrors what the manager's own page does (ManagerState:setOption):
+-- Both routes read and write the one stored value, so they cannot disagree.
+-- Writing through row() mirrors what the manager's page does
+-- (ManagerState:setOption):
 -- the live save's options table, the loader's copy that mod.options:get
 -- reads, and then the file.
 
