@@ -1,7 +1,7 @@
 {
   "id": "DRAMATIC_SHAPE",
   "name": "Dramatic Shape Voxel Mod (Android Performance Fork)",
-  "version": "1.6.0-android.2",
+  "version": "1.6.2-android.1",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -10,11 +10,11 @@
   "priority": 100,
   "dependencies": [],
   "optional_dependencies": [],
-  "conflicts": [],
+  "conflicts": ["ds_fp_ceiling"],
   "permissions": [
     "engine_internals"
   ],
   "affects_link": false,
   "experimental": true,
-  "description": "Unofficial Android-only performance fork of Dramatic Shape 1.6.0 for the Kanto Gear release set. Targets stalls and frame pacing on Android handhelds. Tested on AYN Thor; other devices may vary. PC users should use the original mod."
+  "description": "Unofficial Android-only performance fork of Dramatic Shape 1.6.2 for the Kanto Gear release set. Targets stalls and frame pacing on Android handhelds. Tested on AYN Thor; other devices may vary. PC users should use the original mod."
 }

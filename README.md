@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > This is an **unofficial Android-only Kanto Gear performance fork**, based on
-> Dramatic Shape Voxel Mod 1.6.0. We love the original mod: on PC, use the
+> Dramatic Shape Voxel Mod 1.6.2. We love the original mod: on PC, use the
 > [official project](https://github.com/DramaticShape/DramaticShapeVoxelMod).
 > This package exists because Android handhelds need additional frame-pacing
 > work. It belongs to the tested
@@ -18,7 +18,7 @@ first-person, third-person, staged-battle and VR features preserved.
 
 ## Install on Android
 
-Download `DRAMATIC_SHAPE-1.6.0-android.2.zip` from this repository's release page and
+Download `DRAMATIC_SHAPE-1.6.2-android.1.zip` from this repository's release page and
 import it through **MODS > Import mod .zip**. Remove the official Voxel Mod
 first if it is installed; both packages intentionally use the same mod ID.
 Confirm the experimental-mod warning and enable it. A fresh setup starts at
@@ -251,13 +251,10 @@ and documented.
 
 ## Licenses
 
-All authorship stays with DramaticShape and the original contributors. The
-upstream project added an MIT license in 1.5.4; this fork carries that license
-without claiming upstream endorsement. Our Android changes use the same terms.
-See [`LICENSE`](LICENSE).
-
-The source repository retains one upstream third-party binary for parity with
-the original project; the Android release ZIP does not include it:
+All upstream authorship stays with DramaticShape and the original contributors;
+this unofficial fork does not imply their endorsement. The source repository
+retains one upstream third-party binary for parity with the original project;
+the Android release ZIP does not include it:
 
 - **`assets/vr/openxr_loader.dll`** — the Khronos OpenXR loader
   (version 1.0.10.2, x64, unmodified), © The Khronos Group Inc.,

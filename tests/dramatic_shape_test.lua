@@ -417,7 +417,7 @@ for i, row in ipairs(grouped) do order[row.id] = i end
 T.check(order["pipeline:tiltshift"] < order["DRAMATIC_SHAPE:grid"],
   "the mode's settings follow its pipeline rows")
 T.eq(order["DRAMATIC_SHAPE:battles"] - order["pipeline:tiltshift"],
-  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 4,
+  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 5,
   "and sit in one unbroken block, not scattered to the end of the list")
 T.check(order["void_fill"] > order["DRAMATIC_SHAPE:battles"],
   "with the engine's own later rows still after them")
@@ -500,7 +500,7 @@ Pipelines.setLevel("voxel", 2)
 local hookedRows = Runtime.call("ui.options.rows", function(_, r) return r end,
                                { data = Data }, { { id = "text_speed" } })
 T.eq(#hookedRows,
-  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 10,
+  #run.loader.exports.DRAMATIC_SHAPE.lib.require("GraphicsSettings").entries + 11,
   "the options hook added a row per setting plus the Stadium ROM action")
 hookedRows.byId = {}
 for _, row in ipairs(hookedRows) do hookedRows.byId[row.id] = row end
@@ -516,6 +516,11 @@ T.eq(water.value(), "FULL",
 water.step({ save = { options = {} }, mods = { modOptions = {} } }, 1)
 T.eq(water.value(), "SKY",
   "stepping down drops the screen-space march and keeps the sky, sun and moon")
+T.eq(hookedRows.byId["DRAMATIC_SHAPE:atmos"].label, "FOREST FX",
+  "the atmosphere row carries its label")
+T.eq(hookedRows.byId["DRAMATIC_SHAPE:atmos"].value(), "FULL",
+  "and defaults to FULL -- it only spends anything on a map with an "
+  .. "atmosphere entry, which is one forest today")
 T.eq(daytime.label, "DAYTIME", "the day/night row carries its label")
 T.eq(daytime.value(), "SYNC",
   "and defaults to SYNC -- no value set follows the clock on the wall")
@@ -2643,12 +2648,12 @@ T.check(plain:find("LOVE_HIGHP_OR_MEDIUMP vec3 vBent", 1, true) ~= nil,
   .. "rather than left to the fragment default")
 T.check(plain:find("LOVE_HIGHP_OR_MEDIUMP Image depthTex", 1, true) ~= nil,
   "and the depth sampler is lifted off lowp, which is eight bits of depth")
-T.check(plain:find(
-    "effect(mediump vec4 color, Image tex, mediump vec2 tc, mediump vec2 sc)",
-    1, true) ~= nil,
-  "effect()'s own floats stay pinned to LOVE's prototype precision -- the "
-  .. "Xclipse compiler reads a definition that drifted from the forward "
-  .. "declaration as an illegal overload and refuses the whole shader")
+T.check(plain:find("#define EFFECT_PREC mediump", 1, true) ~= nil
+        and plain:find("effect(EFFECT_PREC vec4 color", 1, true) ~= nil
+        and Water._source(false, true):find("#define EFFECT_PREC\n", 1, true)
+          ~= nil,
+  "effect() first matches LOVE 11's mediump prototype and keeps LOVE 12's "
+  .. "bare-prototype fallback")
 T.check(plain:find("sc / love_ScreenSize.xy", 1, true) ~= nil,
   "the depth test normalises the pixel coord by the canvas's own pixel "
   .. "size -- `screen` counts canvas UNITS, and on a highdpi phone the two "
@@ -3051,6 +3056,109 @@ T.check(math.abs(cex - 124) < 1 and math.abs(cey - 56) < 1,
   ("and the enemy's too: (%.2f, %.2f)"):format(cex, cey))
 T.check(span(closeRig, shot.player) < span(rig, shot.player),
   "the mons render smaller on it, which is what it trades for fitting")
+
+-- ------- the quarter turns
+--
+-- An arena may be laid down any of the four ways (BattleArena's `turn`), and
+-- the whole claim of the feature is that this is a fact about the GROUND and
+-- never about the shot: the footprint, the two mons and the camera turn
+-- together, so the pair land on the same two anchors at the same size and
+-- only what is behind them changes.
+--
+-- Asserted by REPROJECTING each turn through the real rig, exactly the way
+-- the unturned shot is checked above -- so a rig retune, or a sign error in
+-- the rotation, says so here rather than in a screenshot nobody takes.
+--
+-- In its own scope: the suite's main chunk sits at LuaJIT's 200-active-local
+-- ceiling, and every local below would be one more of them. The leading
+-- semicolon is the file's own convention -- without it the previous
+-- statement's `)` and this `(` parse as one call.
+;(function()
+  local corner = { shot.x, shot.y }
+  -- How wide a mon's own square comes out, measured ACROSS the arena's axis.
+  -- `span` above offsets along world X, which is across the axis only while
+  -- the arena is standing the way the mode was drawn; on the odd quarters the
+  -- axis IS X, so offsetting along it would measure the square's depth --
+  -- foreshortened by a camera that is looking almost straight down it -- and
+  -- report a shrinking mon that is nothing of the kind.
+  local function acrossSpan(cam, point, turn)
+    local d = (turn % 180 == 0) and { 8, 0 } or { 0, 8 }
+    local a = project(cam, { point[1] - d[1], point[2] - d[2] })
+    local b = project(cam, { point[1] + d[1], point[2] + d[2] })
+    return math.abs(b - a)
+  end
+  for _, turn in ipairs({ 0, 90, 180, 270 }) do
+    BattleCam.reset()
+    local a = BattleArena.at(corner[1], corner[2], "wide", turn)
+    T.check(a ~= nil, ("the wide arena places at turn %d"):format(turn))
+    T.eq(a.turn, turn, ("and carries the turn it was placed at (%d)"):format(turn))
+
+    -- the footprint swaps its reach on the odd quarters, which is the whole
+    -- reason a corridor takes one way round and refuses the other
+    local wantW = (turn % 180 == 0) and 3 or 6
+    local wantH = (turn % 180 == 0) and 6 or 3
+    T.eq(a.w, wantW, ("turn %d is %d cells across"):format(turn, wantW))
+    T.eq(a.h, wantH, ("and %d deep"):format(wantH))
+
+    -- both mons stay inside the footprint they were turned within, and stay
+    -- three cells apart -- the gap the move animations are scaled against
+    T.check(a.enemyCell[1] >= a.x and a.enemyCell[1] < a.x + a.w
+            and a.enemyCell[2] >= a.y and a.enemyCell[2] < a.y + a.h,
+      ("turn %d keeps the foe inside the footprint"):format(turn))
+    T.check(a.playerCell[1] >= a.x and a.playerCell[1] < a.x + a.w
+            and a.playerCell[2] >= a.y and a.playerCell[2] < a.y + a.h,
+      ("turn %d keeps the player inside it too"):format(turn))
+    local gap = math.abs(a.enemyCell[1] - a.playerCell[1])
+                + math.abs(a.enemyCell[2] - a.playerCell[2])
+    T.eq(gap, 3, ("turn %d still stands them three cells apart"):format(turn))
+
+    -- and which way the foe lies from the player, which is what `turn` NAMES
+    local dx = a.enemyCell[1] - a.playerCell[1]
+    local dy = a.enemyCell[2] - a.playerCell[2]
+    local want = ({ [0] = { 0, -3 }, [90] = { 3, 0 },
+                    [180] = { 0, 3 }, [270] = { -3, 0 } })[turn]
+    T.check(dx == want[1] and dy == want[2],
+      ("turn %d puts the foe %d,%d from the player: got %d,%d")
+      :format(turn, want[1], want[2], dx, dy))
+
+    -- THE INVARIANT: the same composition, whichever way round it stands
+    local r = BattleCam.rig(a, 0)
+    local ppx, ppy = project(r, a.player)
+    local eex, eey = project(r, a.enemy)
+    T.check(ppx ~= nil and eex ~= nil,
+      ("turn %d keeps both marks in front of the camera"):format(turn))
+    T.check(math.abs(ppx - 26) < 1 and math.abs(ppy - 96) < 1,
+      ("turn %d lands the player's mark on its anchor: (%.2f, %.2f)")
+      :format(turn, ppx, ppy))
+    T.check(math.abs(eex - 124) < 1 and math.abs(eey - 56) < 1,
+      ("turn %d lands the enemy's on its own: (%.2f, %.2f)")
+      :format(turn, eex, eey))
+    T.check(math.abs(acrossSpan(r, a.player, turn) - 64) < 4,
+      ("turn %d still makes the player's square a back pic wide (64px): got "
+       .. "%.2f"):format(turn, acrossSpan(r, a.player, turn)))
+    T.check(math.abs(acrossSpan(r, a.enemy, turn) - 56) < 4,
+      ("turn %d still makes the foe's square a front pic wide (56px): got "
+       .. "%.2f"):format(turn, acrossSpan(r, a.enemy, turn)))
+
+    -- the eye really did move: a turn that left the camera where it was would
+    -- pass every anchor test above by looking at the pair from the side
+    if turn ~= 0 then
+      local base = BattleArena.at(corner[1], corner[2], "wide", 0)
+      BattleCam.reset()
+      local r0 = BattleCam.rig(base, 0)
+      local moved = math.abs(r.eye[1] - r0.eye[1])
+                    + math.abs(r.eye[3] - r0.eye[3])
+      T.check(moved > 16,
+        ("turn %d actually moves the camera (%.1f world px)"):format(turn, moved))
+    end
+  end
+
+  -- degrees in, degrees out, and anything else folded onto the four
+  T.eq(BattleArena.quarters(360), 0, "a full turn is no turn")
+  T.eq(BattleArena.quarters(-90), 3, "and a negative one comes round the back")
+  T.eq(BattleArena.at(1, 1, "wide").turn, 0,
+    "an arena placed without a turn is the way the mode was drawn")
+end)()
 
 -- an arena picks its rig by name, and anything unnamed gets the default
 T.eq(BattleCam.rigFor({ cam = "wide" }), BattleCam.RIGS.wide,
@@ -4124,6 +4232,92 @@ T.check(not DayNight.isCanopy({ id = "MT_MOON_1F" }),
 T.check(not DayNight.isCanopy({ id = "PALLET_TOWN" }),
   "and an outdoor town is already the clock's in full")
 T.check(not DayNight.isCanopy(nil), "no map, no canopy")
+end
+
+-- ------- the air under the canopy
+--
+-- ForestAtmos hangs an INVISIBLE canopy above the forest's real trees and
+-- lets light down through it: fog for the scene shader, a volumetric
+-- march for the beams (GPU-only, not checkable here), colour and strength
+-- following the clock. Everything checkable without a GPU is checked:
+-- the authored table, the hour's ramp, and the seeded particle deal --
+-- which must come out identical on every visit.
+do
+local ForestAtmos =
+  run.loader.exports.DRAMATIC_SHAPE.lib.require("ForestAtmos")
+local DayNight = run.loader.exports.DRAMATIC_SHAPE.lib.require("DayNight")
+
+-- the authored table
+local cfg = ForestAtmos.configFor("VIRIDIAN_FOREST")
+T.check(cfg ~= nil, "Viridian Forest has an atmosphere entry")
+T.check(cfg and (cfg.canopyY or 0) > 32,
+  "whose invisible canopy hangs ABOVE the carved tree hulls (y = 32) -- "
+  .. "a ray is alpha zero at the canopy and only fades in below it")
+T.check(ForestAtmos.configFor("PALLET_TOWN") == nil,
+  "a map without an entry has no atmosphere at all")
+T.check(ForestAtmos.configFor(nil) == nil, "and no map id does not crash")
+
+-- the hour's ramp: gold spears by day, silver rays by night, both dying
+-- back through the twilight handover
+local fmap = { id = "VIRIDIAN_FOREST" }
+local day = ForestAtmos.frame(fmap, DayNight.T.day)
+local night = ForestAtmos.frame(fmap, DayNight.T.night)
+local dusk = ForestAtmos.frame(fmap, DayNight.T.dusk)
+T.check(day and night and dusk, "the forest answers at every pin")
+T.check(day.rayColor[1] > day.rayColor[3],
+  "the day's rays are sun-gold: more red than blue")
+T.check(night.rayColor[3] > night.rayColor[1],
+  "the night's are moon-silver: more blue than red")
+T.check(dusk.rayAlpha < day.rayAlpha and dusk.rayAlpha < night.rayAlpha,
+  "and the twilight is the dim handover between the two")
+T.check(day.fog.density > 0 and night.fog.density > 0,
+  "the haze never lifts entirely, day or night")
+T.check(day.moteLevel > 0.5 and day.fireflyLevel < 0.05,
+  "pollen drifts through the day's beams, with no fireflies out")
+T.check(night.fireflyLevel > 0.5 and night.moteLevel < 0.05,
+  "and the night shift trades them")
+
+-- the seeded deal: the same particles on every visit (the beams place
+-- themselves -- they are marched from the shadow map, not dealt)
+local tcfg = { canopyY = 56, fadeTo = 28, seed = 77,
+               motes = { count = 12 }, fireflies = { count = 6 } }
+local a = ForestAtmos.layout(tcfg, 320, 320)
+local b = ForestAtmos.layout(tcfg, 320, 320)
+T.eq(#a.motes, 12, "the pollen musters at authored strength")
+T.eq(#a.flies, 6, "the fireflies too")
+local same = true
+for i = 1, #a.motes do
+  local m1, m2 = a.motes[i], b.motes[i]
+  same = same and m1.x == m2.x and m1.y == m2.y and m1.z == m2.z
+end
+T.check(same, "and the deal comes out identical on every visit")
+local under = true
+for _, m in ipairs(a.motes) do
+  if m.y >= tcfg.canopyY then under = false end
+end
+T.check(under, "everything drifts BELOW the canopy it lives under")
+
+-- the tuning override, the same handle arena_editor holds on battles
+ForestAtmos.setOverride("PALLET_TOWN", { canopyY = 40, fog = {} })
+T.check(ForestAtmos.configFor("PALLET_TOWN") ~= nil,
+  "an override stages an atmosphere a driver can tune live")
+ForestAtmos.setOverride("VIRIDIAN_FOREST", false)
+T.check(ForestAtmos.configFor("VIRIDIAN_FOREST") == nil,
+  "false is meaningful: this map has none, whatever the file says")
+ForestAtmos.setOverride("PALLET_TOWN", nil)
+ForestAtmos.setOverride("VIRIDIAN_FOREST", nil)
+T.check(ForestAtmos.configFor("VIRIDIAN_FOREST") ~= nil
+        and ForestAtmos.configFor("PALLET_TOWN") == nil,
+  "and nil hands both back to the authored table")
+
+-- the row: OFF is the ladder's last rung and the frame answers nothing
+T.eq(ForestAtmos.setting.values[1], "full",
+  "the atmosphere defaults to FULL -- it costs a handful of quads and "
+  .. "exists on one map")
+ForestAtmos.setting:sync("off")
+T.check(ForestAtmos.frame(fmap, DayNight.T.day) == nil,
+  "OFF answers no frame at all: no fog uniform, no draw, no spend")
+ForestAtmos.setting:sync("full")
 end
 
 -- ------- a shadow keeps hold of the feet that throw it
@@ -5759,11 +5953,15 @@ for _, dex in ipairs({ 25, 6, 95, 143 }) do
   end
 end
 
--- the three species whose standby loop is corrupt in the source extraction
--- are marked to hold their bind pose instead of coming apart
-T.eq(Pack.load(126).staticPose, true,
-  "Magmar is held at its bind pose -- its source animations are broken")
-T.eq(pikachu.staticPose, false, "and a species with good data is not")
+-- No species is held at its bind pose any more. Magmar (with Pidgeot,
+-- Dodrio, Exeggutor and Tangela) uses the game's hermite-keyframe animation
+-- mode, which the extractor used to misread as packed streams -- the flags
+-- byte was read at +0, the always-zero high half of the u16 -- and the
+-- packer then declared their exploding standby loops corrupt. The broken-
+-- idle detector stays as the guard, so this asserts it no longer fires.
+T.eq(Pack.load(126).staticPose, false,
+  "Magmar animates -- its hermite animations decode correctly now")
+T.eq(pikachu.staticPose, false, "and a packed-stream species does too")
 end)()
 
 Pipelines.reset()

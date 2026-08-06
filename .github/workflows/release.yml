@@ -99,7 +99,7 @@ jobs:
           rm -rf "$staging" "$out"
           mkdir -p "$staging" "$out"
 
-          git archive HEAD LICENSE manifest.json main.lua mod.card data lib \
+          git archive HEAD manifest.json main.lua mod.card data lib \
             | tar -x -C "$staging"
 
           python3 - "$staging/manifest.json" "$VERSION" <<'PY'
