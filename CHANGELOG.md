@@ -2,14 +2,13 @@
 
 ## Unreleased
 
+## 1.7.0-android.1
+
 - Kept the global OPTIONS menu focused on VOXEL, T-SHIFT, 3D-BTL and the
   Stadium ROM action. Detailed renderer and presentation controls now live
   only on the mod's existing options page; saved values and defaults are
   unchanged. With Modern UI installed, MOD MENUS > VOXEL MOD opens that page
   directly.
-
-## 1.7.0-android.1
-
 - Rebased the Android performance fork on upstream 1.7.0.
 - Kept the Android graphics presets, cooperative terrain builds, camera
   culling, split shadow updates and companion-screen battle HUD fix.
