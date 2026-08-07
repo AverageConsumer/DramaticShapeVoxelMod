@@ -598,6 +598,22 @@ for _, entry in ipairs(SETTINGS) do
 end
 mod.options:define(schema)
 
+-- Modern UI groups mod-owned Start-menu rows under MOD MENUS. Reuse the
+-- engine's existing options page instead of maintaining a second settings UI.
+mod.hooks:wrap("ui.start_menu.items", function(next, game, items)
+  local out = next(game, items)
+  if type(out) ~= "table" or not mod.find("gen1_modern_ui") then return out end
+  return mod.ui.insertBefore(out, "MODS", {
+    id = mod.id .. ".options",
+    label = "VOXEL MOD",
+    onSelect = function()
+      local manager = mod.ui.push(game, "ManagerState")
+      local own = manager.byId and manager.byId[mod.id]
+      if own and manager.openOptions then manager:openOptions(own) end
+    end,
+  })
+end)
+
 -- ------- this mod's hotkeys
 --
 --   3  VOXEL    cycle the camera ladder      (was 6; skips FULL)

@@ -152,6 +152,29 @@ T.eq(byLabel.VOXEL.value(), "FULL", "the row renders the current rung's label")
 local Runtime = require("src.mods.Runtime")
 local VoxelState = run.loader.exports.DRAMATIC_SHAPE.lib.require("VoxelState")
 
+;(function()
+  local plainStart = Runtime.call("ui.start_menu.items",
+    function(_, items) return items end, {}, {
+      { label = "OPTION" }, { label = "MODS" },
+    })
+  T.eq(#plainStart, 2,
+    "the Start menu stays unchanged when Modern UI is absent")
+  run.loader.mods.gen1_modern_ui = {
+    enabled = true, manifest = { version = "0.8.2" },
+  }
+  run.loader.exports.gen1_modern_ui = {}
+  local modernStart = Runtime.call("ui.start_menu.items",
+    function(_, items) return items end, {}, {
+      { label = "OPTION" }, { label = "MODS" },
+    })
+  T.eq(#modernStart, 3, "Modern UI receives one Voxel Mod menu row")
+  T.eq(modernStart[2].id, "DRAMATIC_SHAPE.options",
+    "the Voxel Mod row is stable and anchored before MODS")
+  T.eq(modernStart[2].label, "VOXEL MOD", "the shortcut has a concise label")
+  T.check(type(modernStart[2].onSelect) == "function",
+    "the Voxel Mod row opens its existing options")
+end)()
+
 -- ------- FULL is a preset that owns the rows describing the LOOK
 --
 -- T-SHIFT and the headline 3D-BTL row remain on the global menu. The detailed

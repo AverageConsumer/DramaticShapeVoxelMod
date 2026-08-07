@@ -43,7 +43,8 @@ animated water tiles. This fork does not carry a separate workaround.
 
 Every key is free-roam only. The headline **VOXEL**, **T-SHIFT** and
 **3D-BTL** rows stay on the main **OPTIONS** menu; detailed controls live under
-**MODS > DRAMATIC SHAPE > OPTIONS**.
+**MODS > DRAMATIC SHAPE > OPTIONS**. With Modern UI installed, use the shorter
+**MOD MENUS > VOXEL MOD** route instead.
 
 | control | does |
 | --- | --- |

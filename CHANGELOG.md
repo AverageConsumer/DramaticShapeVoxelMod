@@ -4,8 +4,9 @@
 
 - Kept the global OPTIONS menu focused on VOXEL, T-SHIFT, 3D-BTL and the
   Stadium ROM action. Detailed renderer and presentation controls now live
-  only under MODS > DRAMATIC SHAPE > OPTIONS; saved values and defaults are
-  unchanged.
+  only on the mod's existing options page; saved values and defaults are
+  unchanged. With Modern UI installed, MOD MENUS > VOXEL MOD opens that page
+  directly.
 
 ## 1.6.2-android.1
 
