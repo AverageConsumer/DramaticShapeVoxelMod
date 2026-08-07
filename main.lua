@@ -520,7 +520,13 @@ end
 local OWNED_SETTINGS = {
   { VoxelGrid.setting, "One-pixel wireframe along every voxel edge." },
   { WorldCurve.setting,
-    "Bend the world down over the horizon, Animal Crossing style." },
+    "Bend the world down over the horizon, Animal Crossing style. 1 is a "
+    .. "hint of roll at the frame edges and 2 is the classic read; 3 is as "
+    .. "far as it goes before the horizon closes over ground you can still "
+    .. "walk into. 4 and 5 are past that on purpose and they are for a "
+    .. "headset's DIORAMA, where the world is a model being looked at "
+    .. "rather than walked around in -- 5 curls it into a half sphere, a "
+    .. "town on top of its own little planet." },
   { Water.setting,
     "Reflections on water. FULL adds screen-space reflections of the "
     .. "shoreline, the trees and the buildings behind it; SKY is the sky, "
@@ -566,9 +572,18 @@ local OWNED_SETTINGS = {
     .. "pixels in each direction and 4X twice, which makes this the most "
     .. "expensive row in the mod." },
   { VR.setting,
-    "PCVR through OpenXR (SteamVR, Oculus, WMR). The diorama becomes a "
-    .. "tabletop model your head moves around; the 1ST rung stands you "
-    .. "inside the world at life size, looking where the headset looks. "
+    "PCVR through OpenXR (SteamVR, Oculus, WMR). STANDARD follows the VOXEL "
+    .. "ladder: the orbit rungs become a tabletop model your head moves "
+    .. "around, and the 1ST rung stands you inside the world at life size, "
+    .. "looking where the headset looks. DIORAMA is one presentation "
+    .. "instead -- the world always a model, cut to a square viewport you "
+    .. "grab with the grips to carry, turn and open out, with a "
+    .. "fight arriving as a floating disc of the map. There is no 2D and "
+    .. "no first person in it, and the left stick's click throws V-CURVE "
+    .. "to its top rung and back -- which turns the square cut into a ball "
+    .. "with a dissolved rim, because a bent world has no straight sides. "
+    .. "DIORAMA-MR is the same with the background keyed green, for a "
+    .. "mixed-reality capture. "
     .. "Menus and dialogs float on a panel. Needs a Windows OpenXR runtime "
     .. "and the mod running from a real folder; without them the row stays "
     .. "and the game stays flat, with the reason on the console." },
@@ -577,7 +592,11 @@ local OWNED_SETTINGS = {
     .. "flick. OFF by default, and deliberately: a software turn moves the "
     .. "world past a head that did not move, which is the most reliable way "
     .. "to make somebody ill in a headset. Turn it on if you have your sea "
-    .. "legs and want the continuity." },
+    .. "legs and want the continuity.",
+    -- and only under STANDARD: the stick turns a HEAD, and neither diorama
+    -- mode has the player standing in the world to be turned
+    when = function() return VR.enabled() and not VR.dioramaMode() end,
+    full = true },
 }
 
 local SETTINGS = {}
@@ -685,10 +704,29 @@ local function cycleVoxel(game)
   return true
 end
 
+-- The same, to a NAMED rung rather than one step on: what a diorama mode
+-- holds the ladder with, since 2D and both free-roam rungs are things it
+-- cannot present (see VR.setVoxelLevel). Everything after the setLevel is
+-- the engine work above, for the same reasons.
+local function setVoxelLevel(game, level)
+  local Pipelines = require("src.render.Pipelines")
+  if Horde.viewLocked() then return false end
+  if Pipelines.level("voxel") == level then return false end
+  Pipelines.setLevel("voxel", level)
+  Pipelines.syncOptions(game.save.options)
+  game.save.options.tilt = 0
+  game.save.options.gbcfx = 0
+  require("src.render.GBCFX").setLevel(0)
+  require("src.render.Tilt").setLevel(game.save.options.tilt or 0)
+  game:writeOptions()
+  return true
+end
+
 -- The VR stick click makes this same step (VR.stepView): the function is
 -- a local of this file, so the handoff is explicit rather than a
 -- reimplementation drifting out of date in lib/VR.lua.
 VR.cycleVoxel = cycleVoxel
+VR.setVoxelLevel = setVoxelLevel
 
 do
   local Game = require("src.core.Game")
@@ -1269,7 +1307,7 @@ if Perf.enabled then
   end
 end
 
-mod.exports.version = "1.6.0-android.2"
+mod.exports.version = "1.7.0-android.1"
 -- exposed so a companion mod can pin its own tiles' shapes or read the
 -- camera without reaching into this mod's file layout
 mod.exports.lib = V
