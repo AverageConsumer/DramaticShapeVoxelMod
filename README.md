@@ -1,14 +1,16 @@
 # Dramatic Shape Voxel Mod
 
-> [!IMPORTANT]
-> This is an **unofficial Android-only Kanto Gear performance fork**, based on
-> Dramatic Shape Voxel Mod 1.7.0. We love the original mod: on PC, use the
-> [official project](https://github.com/DramaticShape/DramaticShapeVoxelMod).
-> This package exists because Android handhelds need additional frame-pacing
-> work. It belongs to the tested
-> [Kanto Gear](https://github.com/AverageConsumer/kanto-gear) release set and is
-> verified on an AYN Thor. Comparable Android handhelds are intended targets,
-> but their performance and driver behavior still need community testing.
+> [!WARNING]
+> **This fork is frozen at `1.7.0-android.1` and is no longer maintained or
+> supported.** Its final release remains available for existing users, but it
+> will receive no upstream, compatibility, feature or support updates. Kanto
+> Gear does not require a Voxel renderer and no longer treats this fork as part
+> of its current matched release set.
+
+This was an unofficial Android-only Kanto Gear performance fork based on
+Dramatic Shape Voxel Mod 1.7.0 and verified on an AYN Thor when released. For
+the original project and its supported platforms, use
+[Dramatic Shape Voxel Mod](https://github.com/DramaticShape/DramaticShapeVoxelMod).
 
 A mod for the [Pokémon Gen 1 Recompilation
 Project](https://github.com/bryanthaboi/pokemon-gen1-recomp-project).
@@ -25,8 +27,9 @@ Confirm the experimental-mod warning and enable it. A fresh setup starts at
 **VOXEL 35**, **BALANCED**, **T-SHIFT 3** and **V-CURVE OFF**; existing saved
 choices remain untouched.
 
-This fork does not offer launcher updates. Install the matching Kanto Gear
-release set manually so an upstream package cannot replace its Android fixes.
+Install this package only when you specifically need the frozen legacy build.
+It does not offer launcher, upstream or compatibility updates, and current
+Kanto Gear releases do not depend on it.
 
 ## Performance fork scope
 
